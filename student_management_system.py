@@ -2,7 +2,7 @@
 Student Management System with Role-Based Access Control
 Built with CustomTkinter + MySQL
 Roles: Admin, Teacher, Student
-- Admin: Full access to all data
+- Admin: Full access to all data, can manage teachers
 - Teacher: Access only to their assigned class and students
 - Student: View-only access to their own data
 """
@@ -15,15 +15,11 @@ import hashlib
 import re
 from datetime import datetime
 
-# ─────────────────────────────────────────────
 #  Theme / appearance
-# ─────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# ─────────────────────────────────────────────
 #  Colours
-# ─────────────────────────────────────────────
 PRIMARY    = "#3B82F6"
 PRIMARY_H  = "#2563EB"
 SUCCESS    = "#10B981"
@@ -38,9 +34,7 @@ BORDER     = "#475569"
 SIDEBAR_W  = 220
 
 
-# ══════════════════════════════════════════════
-#  DATABASE LAYER
-# ══════════════════════════════════════════════
+#  DATABASE 
 class Database:
     def __init__(self):
         self.conn = None
@@ -82,13 +76,13 @@ class Database:
                 role       ENUM('admin','teacher','student') DEFAULT 'student',
                 full_name  VARCHAR(100),
                 email      VARCHAR(100),
-                student_id VARCHAR(20),  -- Link to students table for student users
-                teacher_id INT,           -- Link to teachers table (optional)
+                student_id VARCHAR(20),
+                teacher_id INT,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Teachers table with class assignment
+        # Teachers table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS teachers (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -101,17 +95,19 @@ class Database:
             )
         """)
 
+        # Classes table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS classes (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
                 class_name VARCHAR(50)  NOT NULL UNIQUE,
-                teacher_id INT,          -- Teacher assigned to this class
+                teacher_id INT,
                 room       VARCHAR(20),
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
             )
         """)
 
+        # Subjects table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS subjects (
                 id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -124,6 +120,18 @@ class Database:
             )
         """)
 
+        # Class-Subject junction table (many-to-many)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS class_subjects (
+                class_id   INT NOT NULL,
+                subject_id INT NOT NULL,
+                PRIMARY KEY (class_id, subject_id),
+                FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Students table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -141,6 +149,7 @@ class Database:
             )
         """)
 
+        # Scores table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scores (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -179,19 +188,19 @@ class Database:
         # Seed admin user
         admin_pw = hashlib.sha256("admin123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name)
-            VALUES ('admin', %s, 'admin', 'System Administrator')
+            INSERT IGNORE INTO users (username, password, role, full_name, email)
+            VALUES ('admin', %s, 'admin', 'System Administrator', 'admin@school.edu')
         """, (admin_pw,))
 
         # Seed teacher
         teacher_pw = hashlib.sha256("teacher123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO teachers (teacher_id, full_name, email)
-            VALUES ('TCH001', 'Prof. John Smith', 'john.smith@school.edu')
+            INSERT IGNORE INTO teachers (teacher_id, full_name, email, phone)
+            VALUES ('TCH001', 'Prof. John Smith', 'john.smith@school.edu', '555-0101')
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, teacher_id)
-            VALUES ('teacher', %s, 'teacher', 'John Smith', 1)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, teacher_id)
+            VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1)
         """, (teacher_pw,))
 
         # Seed class
@@ -199,27 +208,6 @@ class Database:
             INSERT IGNORE INTO classes (class_name, teacher_id, room)
             VALUES ('Grade 10 - Section A', 1, 'Room 101')
         """)
-
-        # Seed student
-        student_pw = hashlib.sha256("student123".encode()).hexdigest()
-        cur.execute("""
-            INSERT IGNORE INTO students (student_id, full_name, gender, email, class_id)
-            VALUES ('STU001', 'Alice Johnson', 'Female', 'alice@student.edu', 1)
-        """)
-        cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, student_id)
-            VALUES ('student', %s, 'student', 'Alice Johnson', 'STU001')
-        """, (student_pw,))
-
-        # Seed another student
-        cur.execute("""
-            INSERT IGNORE INTO students (student_id, full_name, gender, email, class_id)
-            VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', 1)
-        """)
-        cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, student_id)
-            VALUES ('student2', %s, 'student', 'Bob Williams', 'STU002')
-        """, (student_pw,))
 
         # Seed subjects
         cur.execute("""
@@ -229,6 +217,30 @@ class Database:
                 ('Physics', 'PHY101', 4, 1),
                 ('English', 'ENG101', 3, 1)
         """)
+        
+        # Link subjects to class
+        cur.execute("INSERT IGNORE INTO class_subjects (class_id, subject_id) VALUES (1,1), (1,2), (1,3)")
+
+        # Seed student
+        student_pw = hashlib.sha256("student123".encode()).hexdigest()
+        cur.execute("""
+            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status)
+            VALUES ('STU001', 'Alice Johnson', 'Female', 'alice@student.edu', '555-0201', 1, 'Active')
+        """)
+        cur.execute("""
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id)
+            VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001')
+        """, (student_pw,))
+
+        # Seed another student
+        cur.execute("""
+            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status)
+            VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', '555-0202', 1, 'Active')
+        """)
+        cur.execute("""
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id)
+            VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002')
+        """, (student_pw,))
 
 
 db = Database()
@@ -238,9 +250,7 @@ def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
-# ══════════════════════════════════════════════
 #  LOGIN CLASS
-# ══════════════════════════════════════════════
 class LoginPage(ctk.CTkToplevel):
     def __init__(self, master=None, on_login_success=None):
         super().__init__(master)
@@ -250,7 +260,6 @@ class LoginPage(ctk.CTkToplevel):
         self.configure(fg_color=BG_DARK)
         self.on_login_success = on_login_success
         
-        # Center the window
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (420 // 2)
         y = (self.winfo_screenheight() // 2) - (520 // 2)
@@ -261,11 +270,9 @@ class LoginPage(ctk.CTkToplevel):
         self._build()
         
     def _build(self):
-        # Main container
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
         main_frame.pack(expand=True, fill="both", padx=40, pady=40)
         
-        # Logo / Title
         ctk.CTkLabel(main_frame, text="🎓", font=ctk.CTkFont(size=48)).pack(pady=(0, 10))
         ctk.CTkLabel(main_frame, text="Student Management System",
                      font=ctk.CTkFont(size=24, weight="bold"),
@@ -274,7 +281,6 @@ class LoginPage(ctk.CTkToplevel):
                      font=ctk.CTkFont(size=12),
                      text_color=SUBTEXT).pack(pady=(0, 30))
         
-        # Login form
         form_frame = ctk.CTkFrame(main_frame, fg_color=CARD, corner_radius=12)
         form_frame.pack(fill="x", pady=10)
         
@@ -288,11 +294,9 @@ class LoginPage(ctk.CTkToplevel):
         self.password_entry = StyledEntry(form_frame, placeholder="Enter password", show="•")
         self.password_entry.pack(padx=20, pady=(0, 20), fill="x")
         
-        # Login button
         StyledButton(form_frame, "Login", color=PRIMARY, hover=PRIMARY_H,
                      command=self._do_login).pack(padx=20, pady=(0, 20), fill="x")
         
-        # Info box
         info_frame = ctk.CTkFrame(main_frame, fg_color=CARD2, corner_radius=8)
         info_frame.pack(fill="x", pady=(20, 0))
         
@@ -311,7 +315,6 @@ class LoginPage(ctk.CTkToplevel):
             ctk.CTkLabel(info_frame, text=f"{role}: {cred}",
                          text_color=SUBTEXT, font=ctk.CTkFont(size=11)).pack(pady=2)
         
-        # Bind Enter key
         self.bind("<Return>", lambda e: self._do_login())
         
     def _do_login(self):
@@ -325,7 +328,7 @@ class LoginPage(ctk.CTkToplevel):
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
-                SELECT id, username, role, full_name, student_id, teacher_id 
+                SELECT id, username, role, full_name, student_id, teacher_id, email
                 FROM users WHERE username=%s AND password=%s
             """, (username, hash_pw(password)))
             user = cur.fetchone()
@@ -341,9 +344,7 @@ class LoginPage(ctk.CTkToplevel):
             messagebox.showerror("Database Error", str(e), parent=self)
 
 
-# ══════════════════════════════════════════════
-#  SCROLLABLE PAGE BASE
-# ══════════════════════════════════════════════
+#  SCROLLABLE PAGE
 class ScrollablePage(ctk.CTkFrame):
     def __init__(self, master, **kw):
         super().__init__(master, fg_color="transparent", **kw)
@@ -387,9 +388,7 @@ class ScrollablePage(ctk.CTkFrame):
         self._canvas.yview_moveto(0)
 
 
-# ══════════════════════════════════════════════
 #  REUSABLE WIDGETS
-# ══════════════════════════════════════════════
 class StyledEntry(ctk.CTkEntry):
     def __init__(self, master, placeholder="", show="", **kw):
         super().__init__(master,
@@ -450,14 +449,97 @@ def styled_table(parent, columns, col_widths=None):
     return tree, sb
 
 
-# ══════════════════════════════════════════════
 #  DIALOGS
-# ══════════════════════════════════════════════
+class ProfileDialog(ctk.CTkToplevel):
+    def __init__(self, master, user_data, on_update=None):
+        super().__init__(master)
+        self.title("My Profile")
+        self.geometry("450x500")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_DARK)
+        self.user_data = user_data
+        self.on_update = on_update
+        self.grab_set()
+
+        ctk.CTkLabel(self, text="👤  My Profile",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+        form.columnconfigure(1, weight=1)
+
+        fields = [
+            ("Full Name", "full_name"),
+            ("Email", "email"),
+            ("Username", "username"),
+        ]
+        
+        self.vars = {}
+        row = 0
+        for label, key in fields:
+            ctk.CTkLabel(form, text=label, text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            e = StyledEntry(form, placeholder=label)
+            e.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            if key in user_data and user_data[key]:
+                e.insert(0, str(user_data[key]))
+            if key == "username":
+                e.configure(state="readonly")
+            self.vars[key] = e
+            row += 1
+
+        ctk.CTkLabel(form, text="Change Password (leave blank to keep current)",
+                     text_color=SUBTEXT, font=ctk.CTkFont(size=12)).grid(row=row, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
+        row += 1
+        
+        ctk.CTkLabel(form, text="New Password", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.new_pw_entry = StyledEntry(form, placeholder="Enter new password", show="•")
+        self.new_pw_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+        
+        ctk.CTkLabel(form, text="Confirm Password", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.confirm_pw_entry = StyledEntry(form, placeholder="Confirm new password", show="•")
+        self.confirm_pw_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=16)
+        StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
+                     command=self.destroy).pack(side="left", expand=True, padx=4)
+        StyledButton(btn_row, "💾  Update Profile",
+                     command=self._save).pack(side="left", expand=True, padx=4)
+
+    def _save(self):
+        vals = {k: e.get().strip() for k, e in self.vars.items()}
+        if not vals["full_name"]:
+            messagebox.showwarning("Validation", "Full name is required.", parent=self)
+            return
+        
+        new_pw = self.new_pw_entry.get()
+        confirm_pw = self.confirm_pw_entry.get()
+        
+        if new_pw or confirm_pw:
+            if new_pw != confirm_pw:
+                messagebox.showwarning("Validation", "Passwords do not match.", parent=self)
+                return
+            if len(new_pw) < 4:
+                messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=self)
+                return
+            vals["new_password"] = hash_pw(new_pw)
+        
+        if self.on_update:
+            self.on_update(vals)
+        self.destroy()
+
+
 class StudentDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Student", data=None, on_save=None, teacher_mode=False):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x580")
+        self.geometry("500x650")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
@@ -499,6 +581,14 @@ class StudentDialog(ctk.CTkToplevel):
                           values=["Male", "Female", "Other"],
                           fg_color=CARD2, button_color=PRIMARY,
                           dropdown_fg_color=CARD).grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+        
+        ctk.CTkLabel(form, text="Date of Birth", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.dob_entry = StyledEntry(form, placeholder="YYYY-MM-DD", width=280)
+        self.dob_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        if data and data.get("dob"):
+            self.dob_entry.insert(0, str(data["dob"]))
         row += 1
 
         ctk.CTkLabel(form, text="Class", text_color=SUBTEXT,
@@ -545,8 +635,207 @@ class StudentDialog(ctk.CTkToplevel):
         vals["gender"] = self.gender_var.get()
         vals["status"] = self.status_var.get()
         vals["class_id"] = self.class_map.get(self.class_var.get())
+        vals["dob"] = self.dob_entry.get().strip() or None
         if self.on_save:
             self.on_save(vals)
+        self.destroy()
+
+
+class TeacherDialog(ctk.CTkToplevel):
+    def __init__(self, master, title="Teacher", data=None, on_save=None):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("500x600")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_DARK)
+        self.on_save = on_save
+        self.grab_set()
+
+        ctk.CTkLabel(self, text=title,
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+        form.columnconfigure(1, weight=1)
+
+        fields = [
+            ("Teacher ID", "teacher_id"),
+            ("Full Name",  "full_name"),
+            ("Email",      "email"),
+            ("Phone",      "phone"),
+            ("Address",    "address"),
+        ]
+
+        self.vars = {}
+        row = 0
+        for label, key in fields:
+            ctk.CTkLabel(form, text=label, text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            e = StyledEntry(form, placeholder=label, width=280)
+            e.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            if data and data.get(key):
+                e.insert(0, str(data[key]))
+            self.vars[key] = e
+            row += 1
+
+        ctk.CTkLabel(form, text="Username (for login)", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.username_entry = StyledEntry(form, placeholder="username", width=280)
+        self.username_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        if data and data.get("username"):
+            self.username_entry.insert(0, str(data["username"]))
+        row += 1
+        
+        ctk.CTkLabel(form, text="Password (for new account)", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="•", width=280)
+        self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=16)
+        StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
+                     command=self.destroy).pack(side="left", expand=True, padx=4)
+        StyledButton(btn_row, "💾  Save",
+                     command=self._save).pack(side="left", expand=True, padx=4)
+
+    def _save(self):
+        vals = {k: e.get().strip() for k, e in self.vars.items()}
+        if not vals["teacher_id"] or not vals["full_name"]:
+            messagebox.showwarning("Validation", "Teacher ID and Full Name are required.", parent=self)
+            return
+        
+        vals["username"] = self.username_entry.get().strip()
+        vals["password"] = self.password_entry.get()
+        
+        if self.on_save:
+            self.on_save(vals)
+        self.destroy()
+
+
+class ClassDialog(ctk.CTkToplevel):
+    def __init__(self, master, title="Class", data=None, on_save=None):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("500x550")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_DARK)
+        self.on_save = on_save
+        self.data = data
+        self.grab_set()
+
+        ctk.CTkLabel(self, text=title,
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+        form.columnconfigure(1, weight=1)
+
+        # Class Name
+        ctk.CTkLabel(form, text="Class Name", text_color=SUBTEXT,
+                     anchor="w").grid(row=0, column=0, padx=16, pady=6, sticky="w")
+        self.name_entry = StyledEntry(form, placeholder="e.g. Grade 10 - Section A", width=280)
+        self.name_entry.grid(row=0, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.name_entry.insert(0, data.get("class_name", ""))
+        
+        # Teacher
+        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
+                     anchor="w").grid(row=1, column=0, padx=16, pady=6, sticky="w")
+        teachers = self._load_teachers()
+        self.teacher_map = {v: k for k, v in teachers}
+        teacher_names = [v for _, v in teachers]
+        current_teacher = data.get("teacher", "") if data else ""
+        self.teacher_var = ctk.StringVar(value=current_teacher if current_teacher in teacher_names else (teacher_names[0] if teacher_names else "None"))
+        self.teacher_menu = ctk.CTkOptionMenu(form, variable=self.teacher_var,
+                                              values=teacher_names or ["None"],
+                                              fg_color=CARD2, button_color=PRIMARY,
+                                              dropdown_fg_color=CARD)
+        self.teacher_menu.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
+        
+        # Room
+        ctk.CTkLabel(form, text="Room", text_color=SUBTEXT,
+                     anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
+        self.room_entry = StyledEntry(form, placeholder="Room number", width=280)
+        self.room_entry.grid(row=2, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.room_entry.insert(0, data.get("room", ""))
+        
+        # Subjects section
+        ctk.CTkLabel(form, text="Subjects in this Class", text_color=SUBTEXT,
+                     font=ctk.CTkFont(weight="bold")).grid(row=3, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
+        
+        subjects = self._load_subjects()
+        self.subject_vars = {}
+        
+        subject_frame = ctk.CTkFrame(form, fg_color=CARD2, corner_radius=8)
+        subject_frame.grid(row=4, column=0, columnspan=2, padx=16, pady=6, sticky="ew")
+        
+        existing_subjects = self._get_class_subjects() if data else []
+        
+        for i, (sid, sname) in enumerate(subjects):
+            var = ctk.BooleanVar(value=sid in existing_subjects)
+            cb = ctk.CTkCheckBox(subject_frame, text=sname, variable=var,
+                                 fg_color=PRIMARY, hover_color=PRIMARY_H,
+                                 text_color=TEXT)
+            cb.pack(anchor="w", padx=16, pady=4)
+            self.subject_vars[sid] = var
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=16)
+        StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
+                     command=self.destroy).pack(side="left", expand=True, padx=4)
+        StyledButton(btn_row, "💾  Save",
+                     command=self._save).pack(side="left", expand=True, padx=4)
+
+    def _load_teachers(self):
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("SELECT id, full_name FROM teachers")
+            return [("None", "None")] + [(r["id"], r["full_name"]) for r in cur.fetchall()]
+        except Exception:
+            return [("None", "None")]
+
+    def _load_subjects(self):
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("SELECT id, subject_name FROM subjects ORDER BY subject_name")
+            return [(r["id"], r["subject_name"]) for r in cur.fetchall()]
+        except Exception:
+            return []
+
+    def _get_class_subjects(self):
+        if not self.data:
+            return []
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("SELECT subject_id FROM class_subjects WHERE class_id=%s", (self.data.get("id"),))
+            return [r["subject_id"] for r in cur.fetchall()]
+        except Exception:
+            return []
+
+    def _save(self):
+        name = self.name_entry.get().strip()
+        if not name:
+            messagebox.showwarning("Validation", "Class name is required.", parent=self)
+            return
+        
+        teacher_id = self.teacher_map.get(self.teacher_var.get())
+        if teacher_id == "None":
+            teacher_id = None
+        
+        selected_subjects = [sid for sid, var in self.subject_vars.items() if var.get()]
+        
+        if self.on_save:
+            self.on_save({
+                "class_name": name,
+                "teacher_id": teacher_id,
+                "room": self.room_entry.get().strip() or None,
+                "subjects": selected_subjects,
+                "class_id": self.data.get("id") if self.data else None
+            })
         self.destroy()
 
 
@@ -603,7 +892,13 @@ class ScoreDialog(ctk.CTkToplevel):
     def _load_subjects(self):
         try:
             cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id, subject_name FROM subjects")
+            cur.execute("""
+                SELECT DISTINCT s.id, s.subject_name 
+                FROM subjects s
+                JOIN class_subjects cs ON s.id = cs.subject_id
+                JOIN students st ON st.class_id = cs.class_id
+                WHERE st.id = %s
+            """, (self.student_id,))
             return [(r["id"], r["subject_name"]) for r in cur.fetchall()]
         except Exception:
             return []
@@ -634,9 +929,7 @@ class ScoreDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-# ══════════════════════════════════════════════
 #  SIDEBAR NAV
-# ══════════════════════════════════════════════
 class SidebarButton(ctk.CTkButton):
     def __init__(self, master, text, icon, command, **kw):
         super().__init__(master,
@@ -659,9 +952,7 @@ class SidebarButton(ctk.CTkButton):
             self.configure(fg_color="transparent", text_color=SUBTEXT)
 
 
-# ══════════════════════════════════════════════
 #  PAGE FRAMES
-# ══════════════════════════════════════════════
 class DashboardPage(ScrollablePage):
     def __init__(self, master, user_data):
         super().__init__(master)
@@ -671,7 +962,6 @@ class DashboardPage(ScrollablePage):
     def _build(self):
         SectionLabel(self.inner, "📊  Dashboard").pack(anchor="w", padx=24, pady=(24, 16))
         
-        # Welcome message
         role_display = self.user_data['role'].upper()
         ctk.CTkLabel(self.inner, 
                      text=f"Welcome back, {self.user_data['full_name']} ({role_display})",
@@ -687,8 +977,8 @@ class DashboardPage(ScrollablePage):
             specs = [
                 ("Total Students", "👨‍🎓", PRIMARY, "students"),
                 ("Active",         "✅",  SUCCESS,   "active"),
-                ("Classes",        "🏫",  WARNING,   "classes"),
-                ("Subjects",       "📚",  "#A855F7", "subjects"),
+                ("Teachers",       "👨‍🏫", "#A855F7", "teachers"),
+                ("Subjects",       "📚",  WARNING,   "subjects"),
             ]
         elif self.user_data['role'] == 'teacher':
             specs = [
@@ -697,7 +987,7 @@ class DashboardPage(ScrollablePage):
                 ("My Class",       "🏫",  WARNING,   "class"),
                 ("Subjects",       "📚",  "#A855F7", "subjects"),
             ]
-        else:  # student
+        else:
             specs = [
                 ("My Scores",      "📊", PRIMARY, "scores_count"),
                 ("Average",        "📈", SUCCESS, "average"),
@@ -731,7 +1021,6 @@ class DashboardPage(ScrollablePage):
             self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=(0, 16))
             sb.pack(side="right", fill="y", pady=(0, 16), padx=(0, 8))
         else:
-            # Student score view
             score_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
             score_frame.pack(fill="both", expand=True, padx=24, pady=20)
             ctk.CTkLabel(score_frame, text="📖  My Academic Performance",
@@ -755,8 +1044,8 @@ class DashboardPage(ScrollablePage):
                 self.stat_cards["students"].configure(text=cur.fetchone()["n"])
                 cur.execute("SELECT COUNT(*) AS n FROM students WHERE status='Active'")
                 self.stat_cards["active"].configure(text=cur.fetchone()["n"])
-                cur.execute("SELECT COUNT(*) AS n FROM classes")
-                self.stat_cards["classes"].configure(text=cur.fetchone()["n"])
+                cur.execute("SELECT COUNT(*) AS n FROM teachers")
+                self.stat_cards["teachers"].configure(text=cur.fetchone()["n"])
                 cur.execute("SELECT COUNT(*) AS n FROM subjects")
                 self.stat_cards["subjects"].configure(text=cur.fetchone()["n"])
 
@@ -774,7 +1063,6 @@ class DashboardPage(ScrollablePage):
                                              r["class_name"] or "—", r["status"], r["created"]))
                     
             elif self.user_data['role'] == 'teacher':
-                # Get teacher's class
                 cur.execute("""
                     SELECT c.id, c.class_name FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
@@ -810,7 +1098,7 @@ class DashboardPage(ScrollablePage):
                     self.stat_cards["class"].configure(text="No Class")
                     self.stat_cards["subjects"].configure(text="0")
                     
-            else:  # student
+            else:
                 cur.execute("""
                     SELECT COUNT(id) AS n FROM scores 
                     WHERE student_id = (SELECT id FROM students WHERE student_id=%s)
@@ -824,12 +1112,10 @@ class DashboardPage(ScrollablePage):
                 avg = cur.fetchone()["avg"] or 0
                 self.stat_cards["average"].configure(text=str(avg))
                 
-                # Get student status
                 cur.execute("SELECT status FROM students WHERE student_id=%s", (self.user_data['student_id'],))
                 status = cur.fetchone()
                 self.stat_cards["status"].configure(text=status['status'] if status else "Active")
                 
-                # Load scores
                 cur.execute("""
                     SELECT sub.subject_name, sc.midterm, sc.final, sc.total, sc.grade
                     FROM scores sc
@@ -867,9 +1153,13 @@ class StudentsPage(ScrollablePage):
                          command=self._edit).pack(side="left", padx=4)
             StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
                          command=self._delete).pack(side="left", padx=4)
+            StyledButton(btn_bar, "📊 Scores", color=SUCCESS, hover="#059669",
+                         command=self._scores).pack(side="left", padx=4)
         elif self.user_data['role'] == 'teacher':
             StyledButton(btn_bar, "📊 Scores", color=SUCCESS, hover="#059669",
                          command=self._scores).pack(side="left", padx=4)
+            StyledButton(btn_bar, "View Details", color=PRIMARY,
+                         command=self._view).pack(side="left", padx=4)
 
         search_row = ctk.CTkFrame(self.inner, fg_color="transparent")
         search_row.pack(fill="x", padx=24, pady=10)
@@ -891,7 +1181,6 @@ class StudentsPage(ScrollablePage):
         self.refresh()
 
     def _get_class_filter(self):
-        """Get class ID filter for teacher role"""
         if self.user_data['role'] == 'teacher':
             try:
                 cur = db.cursor(dictionary=True)
@@ -914,7 +1203,7 @@ class StudentsPage(ScrollablePage):
             cur = db.cursor(dictionary=True)
             sql = """
                 SELECT s.id, s.student_id, s.full_name, s.gender,
-                       s.email, s.phone, c.class_name, s.status
+                       s.email, s.phone, c.class_name, s.status, s.dob, s.address
                 FROM students s
                 LEFT JOIN classes c ON s.class_id=c.id
             """
@@ -949,27 +1238,9 @@ class StudentsPage(ScrollablePage):
         sel = self.tree.selection()
         self.selected_db_id = int(sel[0]) if sel else None
 
-    def _add(self):
-        StudentDialog(self, "Add Student", on_save=self._do_add)
-
-    def _do_add(self, vals):
-        try:
-            cur = db.cursor()
-            cur.execute("""
-                INSERT INTO students (student_id,full_name,gender,email,phone,address,class_id,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (vals["student_id"], vals["full_name"], vals["gender"],
-                  vals["email"], vals["phone"], vals["address"],
-                  vals["class_id"], vals["status"]))
-            db.commit()
-            self.refresh()
-        except Error as e:
-            messagebox.showerror("Error", str(e))
-
-    def _edit(self):
+    def _get_selected_data(self):
         if not self.selected_db_id:
-            messagebox.showinfo("Select", "Please select a student first.")
-            return
+            return None
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
@@ -977,24 +1248,91 @@ class StudentsPage(ScrollablePage):
                 LEFT JOIN classes c ON s.class_id=c.id
                 WHERE s.id=%s
             """, (self.selected_db_id,))
-            data = cur.fetchone()
+            return cur.fetchone()
+        except Exception:
+            return None
+
+    def _add(self):
+        StudentDialog(self, "Add Student", on_save=self._do_add)
+
+    def _do_add(self, vals):
+        try:
+            cur = db.cursor()
+            cur.execute("""
+                INSERT INTO students (student_id,full_name,gender,email,phone,address,class_id,status,dob)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (vals["student_id"], vals["full_name"], vals["gender"],
+                  vals["email"], vals["phone"], vals["address"],
+                  vals["class_id"], vals["status"], vals.get("dob")))
+            db.commit()
+            self.refresh()
+            messagebox.showinfo("Success", "Student added successfully!")
         except Error as e:
-            messagebox.showerror("Error", str(e)); return
+            messagebox.showerror("Error", str(e))
+
+    def _edit(self):
+        data = self._get_selected_data()
+        if not data:
+            messagebox.showinfo("Select", "Please select a student first.")
+            return
         StudentDialog(self, "Edit Student", data=data,
                       on_save=lambda v: self._do_edit(v))
+
+    def _view(self):
+        data = self._get_selected_data()
+        if not data:
+            messagebox.showinfo("Select", "Please select a student first.")
+            return
+        self._show_student_details(data)
+
+    def _show_student_details(self, data):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Student Details - {data['full_name']}")
+        dialog.geometry("450x500")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=BG_DARK)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="📋  Student Details",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=TEXT).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(dialog, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+
+        details = [
+            ("Student ID", data.get("student_id", "—")),
+            ("Full Name", data.get("full_name", "—")),
+            ("Gender", data.get("gender", "—")),
+            ("Date of Birth", data.get("dob", "—")),
+            ("Email", data.get("email", "—")),
+            ("Phone", data.get("phone", "—")),
+            ("Class", data.get("class_name", "—")),
+            ("Status", data.get("status", "—")),
+            ("Address", data.get("address", "—")),
+        ]
+
+        for i, (label, value) in enumerate(details):
+            ctk.CTkLabel(form, text=f"{label}:", text_color=SUBTEXT,
+                         font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, padx=16, pady=6, sticky="w")
+            ctk.CTkLabel(form, text=str(value), text_color=TEXT,
+                         anchor="w").grid(row=i, column=1, padx=16, pady=6, sticky="w")
+
+        StyledButton(dialog, "Close", command=dialog.destroy).pack(pady=20)
 
     def _do_edit(self, vals):
         try:
             cur = db.cursor()
             cur.execute("""
                 UPDATE students SET student_id=%s,full_name=%s,gender=%s,
-                email=%s,phone=%s,address=%s,class_id=%s,status=%s
+                email=%s,phone=%s,address=%s,class_id=%s,status=%s,dob=%s
                 WHERE id=%s
             """, (vals["student_id"], vals["full_name"], vals["gender"],
                   vals["email"], vals["phone"], vals["address"],
-                  vals["class_id"], vals["status"], self.selected_db_id))
+                  vals["class_id"], vals["status"], vals.get("dob"), self.selected_db_id))
             db.commit()
             self.refresh()
+            messagebox.showinfo("Success", "Student updated successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
 
@@ -1005,19 +1343,21 @@ class StudentsPage(ScrollablePage):
         if messagebox.askyesno("Confirm Delete", "Delete this student and all their scores?"):
             try:
                 cur = db.cursor()
+                cur.execute("DELETE FROM users WHERE student_id=(SELECT student_id FROM students WHERE id=%s)", (self.selected_db_id,))
                 cur.execute("DELETE FROM students WHERE id=%s", (self.selected_db_id,))
                 db.commit()
                 self.selected_db_id = None
                 self.refresh()
+                messagebox.showinfo("Success", "Student deleted successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
     def _scores(self):
-        if not self.selected_db_id:
+        data = self._get_selected_data()
+        if not data:
             messagebox.showinfo("Select", "Please select a student first.")
             return
-        sel = self.tree.item(self.selected_db_id)["values"]
-        name = sel[1] if sel else "Student"
+        name = data['full_name']
         ScoreDialog(self, self.selected_db_id, name, on_save=self._do_scores)
 
     def _do_scores(self, rows):
@@ -1033,6 +1373,234 @@ class StudentsPage(ScrollablePage):
             messagebox.showinfo("Saved", "Scores saved successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
+
+
+class TeachersPage(ScrollablePage):
+    def __init__(self, master, user_data):
+        super().__init__(master)
+        self.user_data = user_data
+        self.selected_id = None
+        self._build()
+
+    def _build(self):
+        top = ctk.CTkFrame(self.inner, fg_color="transparent")
+        top.pack(fill="x", padx=24, pady=(24, 0))
+        SectionLabel(top, "👨‍🏫  Teachers").pack(side="left")
+
+        btn_bar = ctk.CTkFrame(top, fg_color="transparent")
+        btn_bar.pack(side="right")
+        StyledButton(btn_bar, "➕ Add", command=self._add).pack(side="left", padx=4)
+        StyledButton(btn_bar, "✏️ Edit", color=WARNING, hover="#D97706",
+                     command=self._edit).pack(side="left", padx=4)
+        StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
+                     command=self._delete).pack(side="left", padx=4)
+
+        search_row = ctk.CTkFrame(self.inner, fg_color="transparent")
+        search_row.pack(fill="x", padx=24, pady=10)
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", lambda *_: self.refresh())
+        StyledEntry(search_row, placeholder="🔍  Search by name or ID…",
+                    textvariable=self.search_var, width=320).pack(side="left")
+
+        table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
+        table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+
+        cols = ["ID", "Teacher ID", "Name", "Email", "Phone", "Username", "Created"]
+        widths = [60, 100, 200, 180, 100, 120, 140]
+        self.tree, sb = styled_table(table_frame, cols, widths)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
+        sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        self.refresh()
+
+    def refresh(self):
+        q = self.search_var.get().strip()
+        try:
+            cur = db.cursor(dictionary=True)
+            sql = """
+                SELECT t.id, t.teacher_id, t.full_name, t.email, t.phone,
+                       u.username, DATE_FORMAT(t.created,'%%Y-%%m-%%d') AS created
+                FROM teachers t
+                LEFT JOIN users u ON t.id = u.teacher_id
+            """
+            params = []
+            if q:
+                sql += " WHERE t.teacher_id LIKE %s OR t.full_name LIKE %s"
+                like = f"%{q}%"
+                params = [like, like]
+            sql += " ORDER BY t.created DESC"
+            
+            cur.execute(sql, tuple(params))
+            self.tree.delete(*self.tree.get_children())
+            for r in cur.fetchall():
+                self.tree.insert("", "end", iid=r["id"],
+                                 values=(r["id"], r["teacher_id"], r["full_name"],
+                                         r["email"] or "—", r["phone"] or "—",
+                                         r["username"] or "—", r["created"]))
+        except Exception as e:
+            pass
+
+    def _on_select(self, _):
+        sel = self.tree.selection()
+        self.selected_id = int(sel[0]) if sel else None
+
+    def _get_selected_data(self):
+        if not self.selected_id:
+            return None
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("""
+                SELECT t.*, u.username, u.id as user_id
+                FROM teachers t
+                LEFT JOIN users u ON t.id = u.teacher_id
+                WHERE t.id = %s
+            """, (self.selected_id,))
+            return cur.fetchone()
+        except Exception:
+            return None
+
+    def _add(self):
+        TeacherDialog(self, "Add Teacher", on_save=self._do_add)
+
+    def _do_add(self, vals):
+        if not vals["teacher_id"] or not vals["full_name"]:
+            messagebox.showwarning("Validation", "Teacher ID and Full Name are required.")
+            return
+        
+        try:
+            cur = db.cursor()
+            cur.execute("""
+                INSERT INTO teachers (teacher_id, full_name, email, phone, address)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (vals["teacher_id"], vals["full_name"], vals["email"],
+                  vals["phone"], vals["address"]))
+            teacher_db_id = cur.lastrowid
+            
+            if vals.get("username"):
+                password = vals.get("password") or "password123"
+                hashed_pw = hash_pw(password)
+                cur.execute("""
+                    INSERT INTO users (username, password, role, full_name, email, teacher_id)
+                    VALUES (%s, %s, 'teacher', %s, %s, %s)
+                """, (vals["username"], hashed_pw, vals["full_name"], vals["email"], teacher_db_id))
+            
+            db.commit()
+            self.refresh()
+            messagebox.showinfo("Success", "Teacher added successfully!")
+        except Error as e:
+            messagebox.showerror("Error", str(e))
+
+    def _edit(self):
+        data = self._get_selected_data()
+        if not data:
+            messagebox.showinfo("Select", "Please select a teacher first.")
+            return
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Edit Teacher")
+        dialog.geometry("500x600")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=BG_DARK)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Edit Teacher",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(dialog, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+        form.columnconfigure(1, weight=1)
+
+        fields = [
+            ("Teacher ID", "teacher_id"),
+            ("Full Name", "full_name"),
+            ("Email", "email"),
+            ("Phone", "phone"),
+            ("Address", "address"),
+        ]
+
+        vars_dict = {}
+        row = 0
+        for label, key in fields:
+            ctk.CTkLabel(form, text=label, text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            e = StyledEntry(form, placeholder=label, width=280)
+            e.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            if data and data.get(key):
+                e.insert(0, str(data[key]))
+            vars_dict[key] = e
+            row += 1
+
+        ctk.CTkLabel(form, text="Username", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        username_entry = StyledEntry(form, placeholder="username", width=280)
+        username_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        if data and data.get("username"):
+            username_entry.insert(0, str(data["username"]))
+        row += 1
+
+        def save_edit():
+            new_vals = {k: e.get().strip() for k, e in vars_dict.items()}
+            if not new_vals["teacher_id"] or not new_vals["full_name"]:
+                messagebox.showwarning("Validation", "Teacher ID and Full Name are required.", parent=dialog)
+                return
+            
+            try:
+                cur = db.cursor()
+                cur.execute("""
+                    UPDATE teachers SET teacher_id=%s, full_name=%s, email=%s, phone=%s, address=%s
+                    WHERE id=%s
+                """, (new_vals["teacher_id"], new_vals["full_name"], new_vals["email"],
+                      new_vals["phone"], new_vals["address"], self.selected_id))
+                
+                new_username = username_entry.get().strip()
+                if new_username:
+                    if data.get("username"):
+                        cur.execute("UPDATE users SET username=%s, full_name=%s, email=%s WHERE teacher_id=%s",
+                                    (new_username, new_vals["full_name"], new_vals["email"], self.selected_id))
+                    else:
+                        hashed_pw = hash_pw("password123")
+                        cur.execute("""
+                            INSERT INTO users (username, password, role, full_name, email, teacher_id)
+                            VALUES (%s, %s, 'teacher', %s, %s, %s)
+                        """, (new_username, hashed_pw, new_vals["full_name"], new_vals["email"], self.selected_id))
+                
+                db.commit()
+                self.refresh()
+                messagebox.showinfo("Success", "Teacher updated successfully!", parent=dialog)
+                dialog.destroy()
+            except Error as e:
+                messagebox.showerror("Error", str(e), parent=dialog)
+
+        btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=16)
+        StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
+                     command=dialog.destroy).pack(side="left", expand=True, padx=4)
+        StyledButton(btn_row, "💾  Save",
+                     command=save_edit).pack(side="left", expand=True, padx=4)
+
+    def _delete(self):
+        if not self.selected_id:
+            messagebox.showinfo("Select", "Please select a teacher first.")
+            return
+        
+        data = self._get_selected_data()
+        if data and data.get("username") == "admin":
+            messagebox.showwarning("Cannot Delete", "Cannot delete the default admin account.")
+            return
+            
+        if messagebox.askyesno("Confirm Delete", "Delete this teacher and their user account?"):
+            try:
+                cur = db.cursor()
+                cur.execute("DELETE FROM users WHERE teacher_id=%s", (self.selected_id,))
+                cur.execute("DELETE FROM teachers WHERE id=%s", (self.selected_id,))
+                db.commit()
+                self.selected_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Teacher deleted successfully!")
+            except Error as e:
+                messagebox.showerror("Error", str(e))
 
 
 class ClassesPage(ScrollablePage):
@@ -1056,27 +1624,11 @@ class ClassesPage(ScrollablePage):
             StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
                          command=self._delete).pack(side="left", padx=4)
 
-        form = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
-        form.pack(fill="x", padx=24, pady=16)
-        form.columnconfigure((1, 3), weight=1)
-
-        ctk.CTkLabel(form, text="Class Name", text_color=SUBTEXT).grid(row=0, column=0, padx=12, pady=12, sticky="w")
-        self.name_e = StyledEntry(form, placeholder="e.g. Grade 10 - Section A", state="readonly" if self.user_data['role'] != 'admin' else "normal")
-        self.name_e.grid(row=0, column=1, padx=8, pady=12, sticky="ew")
-
-        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT).grid(row=0, column=2, padx=12, pady=12, sticky="w")
-        self.teacher_e = StyledEntry(form, placeholder="Teacher name", state="readonly" if self.user_data['role'] != 'admin' else "normal")
-        self.teacher_e.grid(row=0, column=3, padx=8, pady=12, sticky="ew")
-
-        ctk.CTkLabel(form, text="Room", text_color=SUBTEXT).grid(row=0, column=4, padx=12, pady=12, sticky="w")
-        self.room_e = StyledEntry(form, placeholder="Room number", width=100, state="readonly" if self.user_data['role'] != 'admin' else "normal")
-        self.room_e.grid(row=0, column=5, padx=8, pady=12, sticky="ew")
-
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
-        table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+        table_frame.pack(fill="both", expand=True, padx=24, pady=20)
 
-        cols  = ["ID", "Class Name", "Teacher", "Room", "Created"]
-        widths = [60, 200, 200, 100, 160]
+        cols = ["ID", "Class Name", "Teacher", "Room", "Subjects", "Created"]
+        widths = [60, 200, 180, 100, 200, 140]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
@@ -1089,72 +1641,109 @@ class ClassesPage(ScrollablePage):
             cur = db.cursor(dictionary=True)
             sql = """
                 SELECT c.id, c.class_name, t.full_name as teacher, c.room, 
+                       GROUP_CONCAT(s.subject_name SEPARATOR ', ') as subjects,
                        DATE_FORMAT(c.created,'%Y-%m-%d') AS created 
                 FROM classes c
                 LEFT JOIN teachers t ON c.teacher_id = t.id
+                LEFT JOIN class_subjects cs ON c.id = cs.class_id
+                LEFT JOIN subjects s ON cs.subject_id = s.id
             """
             if self.user_data['role'] == 'teacher':
-                sql += " WHERE c.teacher_id = %s"
+                sql += " WHERE c.teacher_id = %s GROUP BY c.id"
                 cur.execute(sql, (self.user_data['teacher_id'],))
             else:
+                sql += " GROUP BY c.id ORDER BY c.created DESC"
                 cur.execute(sql)
                 
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
                 self.tree.insert("", "end", iid=r["id"],
                                  values=(r["id"], r["class_name"], r["teacher"] or "—",
-                                         r["room"] or "—", r["created"]))
-        except Exception:
+                                         r["room"] or "—", r["subjects"] or "None", r["created"]))
+        except Exception as e:
             pass
 
     def _on_select(self, _):
         sel = self.tree.selection()
-        if sel:
-            self.selected_id = int(sel[0])
-            vals = self.tree.item(self.selected_id)["values"]
-            self.name_e.delete(0, "end"); self.name_e.insert(0, vals[1])
-            self.teacher_e.delete(0, "end"); self.teacher_e.insert(0, vals[2] if vals[2] != "—" else "")
-            self.room_e.delete(0, "end"); self.room_e.insert(0, vals[3] if vals[3] != "—" else "")
+        self.selected_id = int(sel[0]) if sel else None
+
+    def _get_selected_data(self):
+        if not self.selected_id:
+            return None
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("""
+                SELECT c.*, t.full_name as teacher 
+                FROM classes c
+                LEFT JOIN teachers t ON c.teacher_id = t.id
+                WHERE c.id = %s
+            """, (self.selected_id,))
+            return cur.fetchone()
+        except Exception:
+            return None
 
     def _add(self):
-        name = self.name_e.get().strip()
-        if not name:
-            messagebox.showwarning("Validation", "Class name is required."); return
+        ClassDialog(self, "Add Class", on_save=self._do_add)
+
+    def _do_add(self, vals):
         try:
             cur = db.cursor()
-            cur.execute("INSERT INTO classes (class_name, teacher, room) VALUES (%s,%s,%s)",
-                        (name, self.teacher_e.get().strip() or None, self.room_e.get().strip() or None))
+            cur.execute("""
+                INSERT INTO classes (class_name, teacher_id, room)
+                VALUES (%s, %s, %s)
+            """, (vals["class_name"], vals["teacher_id"], vals["room"]))
+            class_id = cur.lastrowid
+            
+            # Insert subjects for this class
+            for subject_id in vals["subjects"]:
+                cur.execute("INSERT INTO class_subjects (class_id, subject_id) VALUES (%s, %s)",
+                           (class_id, subject_id))
+            
             db.commit()
             self.refresh()
+            messagebox.showinfo("Success", "Class added successfully with subjects!")
         except Error as e:
             messagebox.showerror("Error", str(e))
 
     def _edit(self):
-        if not self.selected_id:
-            messagebox.showinfo("Select", "Select a class first."); return
-        name = self.name_e.get().strip()
-        if not name:
-            messagebox.showwarning("Validation", "Class name is required."); return
+        data = self._get_selected_data()
+        if not data:
+            messagebox.showinfo("Select", "Select a class first.")
+            return
+        ClassDialog(self, "Edit Class", data=data, on_save=self._do_edit)
+
+    def _do_edit(self, vals):
         try:
             cur = db.cursor()
-            cur.execute("UPDATE classes SET class_name=%s, teacher=%s, room=%s WHERE id=%s",
-                        (name, self.teacher_e.get().strip() or None,
-                         self.room_e.get().strip() or None, self.selected_id))
+            cur.execute("""
+                UPDATE classes SET class_name=%s, teacher_id=%s, room=%s
+                WHERE id=%s
+            """, (vals["class_name"], vals["teacher_id"], vals["room"], vals["class_id"]))
+            
+            # Update subjects
+            cur.execute("DELETE FROM class_subjects WHERE class_id=%s", (vals["class_id"],))
+            for subject_id in vals["subjects"]:
+                cur.execute("INSERT INTO class_subjects (class_id, subject_id) VALUES (%s, %s)",
+                           (vals["class_id"], subject_id))
+            
             db.commit()
             self.refresh()
+            messagebox.showinfo("Success", "Class updated successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
 
     def _delete(self):
         if not self.selected_id:
-            messagebox.showinfo("Select", "Select a class first."); return
-        if messagebox.askyesno("Confirm", "Delete this class?"):
+            messagebox.showinfo("Select", "Select a class first.")
+            return
+        if messagebox.askyesno("Confirm", "Delete this class? This will also remove all students in this class."):
             try:
                 cur = db.cursor()
                 cur.execute("DELETE FROM classes WHERE id=%s", (self.selected_id,))
                 db.commit()
                 self.selected_id = None
                 self.refresh()
+                messagebox.showinfo("Success", "Class deleted successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1229,41 +1818,54 @@ class SubjectsPage(ScrollablePage):
                 e.delete(0, "end"); e.insert(0, str(v))
 
     def _add(self):
-        name = self.name_e.get().strip(); code = self.code_e.get().strip()
+        name = self.name_e.get().strip()
+        code = self.code_e.get().strip()
         if not name or not code:
-            messagebox.showwarning("Validation", "Name and Code are required."); return
+            messagebox.showwarning("Validation", "Name and Code are required.")
+            return
         try:
             credits = int(self.credits_e.get() or 3)
             cur = db.cursor()
             cur.execute("INSERT INTO subjects (subject_name,subject_code,credits) VALUES (%s,%s,%s)",
                         (name, code, credits))
-            db.commit(); self.refresh()
+            db.commit()
+            self.refresh()
+            messagebox.showinfo("Success", "Subject added successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
 
     def _edit(self):
         if not self.selected_id:
-            messagebox.showinfo("Select", "Select a subject first."); return
-        name = self.name_e.get().strip(); code = self.code_e.get().strip()
+            messagebox.showinfo("Select", "Select a subject first.")
+            return
+        name = self.name_e.get().strip()
+        code = self.code_e.get().strip()
         if not name or not code:
-            messagebox.showwarning("Validation", "Name and Code are required."); return
+            messagebox.showwarning("Validation", "Name and Code are required.")
+            return
         try:
             credits = int(self.credits_e.get() or 3)
             cur = db.cursor()
             cur.execute("UPDATE subjects SET subject_name=%s,subject_code=%s,credits=%s WHERE id=%s",
                         (name, code, credits, self.selected_id))
-            db.commit(); self.refresh()
+            db.commit()
+            self.refresh()
+            messagebox.showinfo("Success", "Subject updated successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
 
     def _delete(self):
         if not self.selected_id:
-            messagebox.showinfo("Select", "Select a subject first."); return
+            messagebox.showinfo("Select", "Select a subject first.")
+            return
         if messagebox.askyesno("Confirm", "Delete this subject?"):
             try:
                 cur = db.cursor()
                 cur.execute("DELETE FROM subjects WHERE id=%s", (self.selected_id,))
-                db.commit(); self.selected_id = None; self.refresh()
+                db.commit()
+                self.selected_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Subject deleted successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1292,6 +1894,12 @@ class ReportsPage(ScrollablePage):
         
         StyledButton(filter_row, "🔄 Refresh", command=self.refresh).pack(side="right", padx=16, pady=10)
 
+        if self.user_data['role'] != 'student':
+            StyledButton(filter_row, "📝 Edit Scores", color=SUCCESS, hover="#059669",
+                         command=self._edit_scores).pack(side="right", padx=8, pady=10)
+            StyledButton(filter_row, "📊 Export", color=WARNING, hover="#D97706",
+                         command=self._export).pack(side="right", padx=8, pady=10)
+
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
@@ -1305,6 +1913,10 @@ class ReportsPage(ScrollablePage):
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
+        
+        # Bind double-click to edit scores
+        if self.user_data['role'] != 'student':
+            self.tree.bind("<Double-Button-1>", self._on_double_click)
 
         if self.user_data['role'] != 'student':
             self._load_classes()
@@ -1355,7 +1967,7 @@ class ReportsPage(ScrollablePage):
             
             if self.user_data['role'] == 'teacher':
                 sql = """
-                    SELECT s.student_id, s.full_name, c.class_name,
+                    SELECT s.id, s.student_id, s.full_name, c.class_name,
                            COUNT(sc.id) AS subj_count,
                            ROUND(AVG(sc.total),1) AS avg_score
                     FROM students s
@@ -1371,7 +1983,7 @@ class ReportsPage(ScrollablePage):
                 cur.execute(sql, params)
             else:
                 sql = """
-                    SELECT s.student_id, s.full_name, c.class_name,
+                    SELECT s.id, s.student_id, s.full_name, c.class_name,
                            COUNT(sc.id) AS subj_count,
                            ROUND(AVG(sc.total),1) AS avg_score
                     FROM students s
@@ -1385,6 +1997,7 @@ class ReportsPage(ScrollablePage):
                 sql += " GROUP BY s.id ORDER BY avg_score DESC"
                 cur.execute(sql, params)
                 
+            self.students_data = {}
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
                 avg = r["avg_score"] or 0
@@ -1393,17 +2006,72 @@ class ReportsPage(ScrollablePage):
                          "C+" if avg >= 65 else "C" if avg >= 60 else
                          "D" if avg >= 50 else "F")
                 result = "✅ Pass" if avg >= 50 else "❌ Fail"
-                self.tree.insert("", "end",
+                self.tree.insert("", "end", iid=r["id"],
                                  values=(r["student_id"], r["full_name"],
                                          r["class_name"] or "—", r["subj_count"] or 0,
                                          avg, grade, result))
+                self.students_data[r["id"]] = r["student_id"]
         except Exception as e:
             pass
 
+    def _on_double_click(self, event):
+        """Handle double-click on a student to edit scores"""
+        selection = self.tree.selection()
+        if selection:
+            student_db_id = int(selection[0])
+            student_name = self.tree.item(selection[0])['values'][1]
+            ScoreDialog(self, student_db_id, student_name, on_save=self._do_scores)
 
-# ══════════════════════════════════════════════
+    def _edit_scores(self):
+        """Edit scores for selected student"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Select", "Please select a student first.")
+            return
+        student_db_id = int(selection[0])
+        student_name = self.tree.item(selection[0])['values'][1]
+        ScoreDialog(self, student_db_id, student_name, on_save=self._do_scores)
+
+    def _do_scores(self, rows):
+        try:
+            cur = db.cursor()
+            for student_id, subject_id, mid, fin in rows:
+                cur.execute("""
+                    INSERT INTO scores (student_id,subject_id,midterm,final)
+                    VALUES (%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE midterm=%s, final=%s
+                """, (student_id, subject_id, mid, fin, mid, fin))
+            db.commit()
+            messagebox.showinfo("Saved", "Scores saved successfully!")
+            self.refresh()
+        except Error as e:
+            messagebox.showerror("Error", str(e))
+
+    def _export(self):
+        from tkinter import filedialog
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Save Report"
+        )
+        if filename:
+            try:
+                with open(filename, 'w') as f:
+                    f.write("Student Performance Report\n")
+                    f.write("=" * 60 + "\n\n")
+                    items = self.tree.get_children()
+                    headers = [self.tree.heading(col)['text'] for col in self.tree['columns']]
+                    f.write("\t".join(headers) + "\n")
+                    f.write("-" * 60 + "\n")
+                    for item in items:
+                        values = self.tree.item(item)['values']
+                        f.write("\t".join(str(v) for v in values) + "\n")
+                messagebox.showinfo("Success", f"Report exported to {filename}")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+
 #  MAIN APPLICATION
-# ══════════════════════════════════════════════
 class MainApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -1415,33 +2083,23 @@ class MainApp(ctk.CTk):
         self.pages = {}
         self.nav_buttons = {}
         
-        # Show login first
         self.show_login()
     
     def show_login(self):
-        """Show the login screen"""
-        # Clear any existing content
         for widget in self.winfo_children():
             widget.destroy()
         
-        # Create login frame
         self.login_frame = ctk.CTkFrame(self, fg_color=BG_DARK)
         self.login_frame.pack(fill="both", expand=True)
-        
-        # Create login dialog within the frame
         self._create_login_widgets()
     
     def _create_login_widgets(self):
-        """Create login widgets in the main window"""
-        # Main container
         main_frame = ctk.CTkFrame(self.login_frame, fg_color="transparent")
         main_frame.pack(expand=True, fill="both", padx=40, pady=40)
         
-        # Center the content
         center_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         center_frame.pack(expand=True)
         
-        # Logo / Title
         ctk.CTkLabel(center_frame, text="🎓", font=ctk.CTkFont(size=48)).pack(pady=(0, 10))
         ctk.CTkLabel(center_frame, text="Student Management System",
                      font=ctk.CTkFont(size=24, weight="bold"),
@@ -1450,7 +2108,6 @@ class MainApp(ctk.CTk):
                      font=ctk.CTkFont(size=12),
                      text_color=SUBTEXT).pack(pady=(0, 30))
         
-        # Login form
         form_frame = ctk.CTkFrame(center_frame, fg_color=CARD, corner_radius=12)
         form_frame.pack(fill="x", pady=10)
         
@@ -1464,11 +2121,9 @@ class MainApp(ctk.CTk):
         self.password_entry = StyledEntry(form_frame, placeholder="Enter password", show="•")
         self.password_entry.pack(padx=20, pady=(0, 20), fill="x")
         
-        # Login button
         StyledButton(form_frame, "Login", color=PRIMARY, hover=PRIMARY_H,
                      command=self._do_login).pack(padx=20, pady=(0, 20), fill="x")
         
-        # Info box
         info_frame = ctk.CTkFrame(center_frame, fg_color=CARD2, corner_radius=8)
         info_frame.pack(fill="x", pady=(20, 0))
         
@@ -1487,14 +2142,10 @@ class MainApp(ctk.CTk):
             ctk.CTkLabel(info_frame, text=f"{role}: {cred}",
                          text_color=SUBTEXT, font=ctk.CTkFont(size=11)).pack(pady=2)
         
-        # Bind Enter key
         self.bind("<Return>", lambda e: self._do_login())
-        
-        # Set focus to username entry
         self.username_entry.focus()
     
     def _do_login(self):
-        """Handle login attempt"""
         username = self.username_entry.get().strip()
         password = self.password_entry.get()
         
@@ -1505,7 +2156,7 @@ class MainApp(ctk.CTk):
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
-                SELECT id, username, role, full_name, student_id, teacher_id 
+                SELECT id, username, role, full_name, student_id, teacher_id, email
                 FROM users WHERE username=%s AND password=%s
             """, (username, hash_pw(password)))
             user = cur.fetchone()
@@ -1519,16 +2170,40 @@ class MainApp(ctk.CTk):
             messagebox.showerror("Database Error", str(e))
     
     def _build_main_app(self):
-        """Build the main application after successful login"""
-        # Clear login frame
         self.login_frame.destroy()
-        
-        # Build main app UI
         self._build()
     
+    def _update_profile(self, new_data):
+        try:
+            cur = db.cursor()
+            cur.execute("UPDATE users SET full_name=%s, email=%s WHERE id=%s",
+                        (new_data["full_name"], new_data["email"], self.user_data["id"]))
+            
+            if "new_password" in new_data:
+                cur.execute("UPDATE users SET password=%s WHERE id=%s",
+                            (new_data["new_password"], self.user_data["id"]))
+            
+            if self.user_data['role'] == 'student' and self.user_data.get('student_id'):
+                cur.execute("UPDATE students SET full_name=%s, email=%s WHERE student_id=%s",
+                            (new_data["full_name"], new_data["email"], self.user_data['student_id']))
+            elif self.user_data['role'] == 'teacher' and self.user_data.get('teacher_id'):
+                cur.execute("UPDATE teachers SET full_name=%s, email=%s WHERE id=%s",
+                            (new_data["full_name"], new_data["email"], self.user_data['teacher_id']))
+            
+            db.commit()
+            self.user_data["full_name"] = new_data["full_name"]
+            self.user_data["email"] = new_data["email"]
+            
+            messagebox.showinfo("Success", "Profile updated successfully!")
+            
+            current_page = self.pages.get(self.current_page_name) if hasattr(self, 'current_page_name') else None
+            if current_page and hasattr(current_page, "refresh"):
+                current_page.refresh()
+                
+        except Error as e:
+            messagebox.showerror("Error", str(e))
+    
     def _build(self):
-        """Build the main application UI"""
-        # ── Sidebar ──────────────────────────────
         sidebar = ctk.CTkFrame(self, width=SIDEBAR_W, fg_color=CARD, corner_radius=0)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
@@ -1540,11 +2215,11 @@ class MainApp(ctk.CTk):
                      font=ctk.CTkFont(size=20, weight="bold"),
                      text_color=TEXT).pack(expand=True)
 
-        # Navigation items based on role
         if self.user_data['role'] == 'admin':
             nav_items = [
                 ("Dashboard", "📊", self._show_dashboard),
                 ("Students",  "👨‍🎓", self._show_students),
+                ("Teachers",  "👨‍🏫", self._show_teachers),
                 ("Classes",   "🏫", self._show_classes),
                 ("Subjects",  "📚", self._show_subjects),
                 ("Reports",   "📈", self._show_reports),
@@ -1556,7 +2231,7 @@ class MainApp(ctk.CTk):
                 ("Classes",   "🏫", self._show_classes),
                 ("Reports",   "📈", self._show_reports),
             ]
-        else:  # student
+        else:
             nav_items = [
                 ("Dashboard", "📊", self._show_dashboard),
                 ("Reports",   "📈", self._show_reports),
@@ -1579,10 +2254,13 @@ class MainApp(ctk.CTk):
                      text_color=TEXT, font=ctk.CTkFont(weight="bold")).pack(pady=(10, 2))
         ctk.CTkLabel(user_frame, text=f"Role: {self.user_data['role'].title()}",
                      text_color=SUBTEXT, font=ctk.CTkFont(size=11)).pack(pady=(0, 5))
-        StyledButton(user_frame, "Logout", color=DANGER, hover="#DC2626",
+        
+        StyledButton(user_frame, "👤  Profile", color=PRIMARY, hover=PRIMARY_H,
+                     command=self._show_profile).pack(pady=(4, 4), padx=12, fill="x")
+        
+        StyledButton(user_frame, "🚪  Logout", color=DANGER, hover="#DC2626",
                      command=self._logout).pack(pady=(4, 10), padx=12, fill="x")
 
-        # ── Content area ─────────────────────────
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.pack(side="left", fill="both", expand=True)
 
@@ -1592,6 +2270,7 @@ class MainApp(ctk.CTk):
             self.pages = {
                 "Dashboard": DashboardPage(self.content, self.user_data),
                 "Students":  StudentsPage(self.content, self.user_data),
+                "Teachers":  TeachersPage(self.content, self.user_data),
                 "Classes":   ClassesPage(self.content, self.user_data),
                 "Subjects":  SubjectsPage(self.content, self.user_data),
                 "Reports":   ReportsPage(self.content, self.user_data),
@@ -1611,6 +2290,9 @@ class MainApp(ctk.CTk):
 
         self._show_dashboard()
 
+    def _show_profile(self):
+        ProfileDialog(self, self.user_data, on_update=self._update_profile)
+    
     def _show_page(self, name):
         for p in self.pages.values():
             p.pack_forget()
@@ -1622,30 +2304,27 @@ class MainApp(ctk.CTk):
         if hasattr(page, "scroll_to_top"):
             page.scroll_to_top()
         page.pack(fill="both", expand=True)
+        self.current_page_name = name
 
     def _show_dashboard(self): self._show_page("Dashboard")
     def _show_students(self):  self._show_page("Students")
+    def _show_teachers(self):  self._show_page("Teachers")
     def _show_classes(self):   self._show_page("Classes")
     def _show_subjects(self):  self._show_page("Subjects")
     def _show_reports(self):   self._show_page("Reports")
 
     def _logout(self):
-        """Handle logout - clear user data and show login screen"""
-        # Clear user data
         self.user_data = None
         self.pages = {}
         self.nav_buttons = {}
         
-        # Clear all widgets
         for widget in self.winfo_children():
             widget.destroy()
         
-        # Show login screen again
         self.show_login()
 
 
 if __name__ == "__main__":
-    # Connect to database
     ok, msg = db.connect("localhost", "root", "root")
     if not ok:
         import tkinter as tk
@@ -1667,6 +2346,5 @@ if __name__ == "__main__":
             messagebox.showerror("Setup Error", str(e))
             root.destroy()
         else:
-            # Create and run the main app (which shows login first)
             app = MainApp()
             app.mainloop()
