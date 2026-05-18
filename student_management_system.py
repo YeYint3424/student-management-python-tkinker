@@ -1,25 +1,15 @@
-"""
-Student Management System with Role-Based Access Control
-Built with CustomTkinter + MySQL
-Roles: Admin, Teacher, Student
-- Admin: Full access to all data, can manage teachers
-- Teacher: Access only to their assigned class and students
-- Student: View-only access to their own data
-"""
-
 import customtkinter as ctk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import mysql.connector
 from mysql.connector import Error
 import hashlib
-import re
 from datetime import datetime
 
-#  Theme / appearance
+# Theme / appearance
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-#  Colours
+# Colours
 PRIMARY    = "#3B82F6"
 PRIMARY_H  = "#2563EB"
 SUCCESS    = "#10B981"
@@ -33,8 +23,7 @@ SUBTEXT    = "#94A3B8"
 BORDER     = "#475569"
 SIDEBAR_W  = 220
 
-
-#  DATABASE 
+# DATABASE 
 class Database:
     def __init__(self):
         self.conn = None
@@ -67,7 +56,7 @@ class Database:
         cur.execute("CREATE DATABASE IF NOT EXISTS student_management_db")
         cur.execute("USE student_management_db")
 
-        # Users table - includes student_id for student users
+        # Users table with soft delete
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -78,11 +67,14 @@ class Database:
                 email      VARCHAR(100),
                 student_id VARCHAR(20),
                 teacher_id INT,
+                status     ENUM('Active','Inactive') DEFAULT 'Active',
+                is_deleted BOOLEAN DEFAULT FALSE,
+                deleted_at DATETIME,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Teachers table
+        # Teachers table with soft delete and status
         cur.execute("""
             CREATE TABLE IF NOT EXISTS teachers (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -91,23 +83,29 @@ class Database:
                 email      VARCHAR(100),
                 phone      VARCHAR(20),
                 address    TEXT,
+                status     ENUM('Active','Inactive') DEFAULT 'Active',
+                is_deleted BOOLEAN DEFAULT FALSE,
+                deleted_at DATETIME,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Classes table
+        # Classes table with soft delete and status
         cur.execute("""
             CREATE TABLE IF NOT EXISTS classes (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
                 class_name VARCHAR(50)  NOT NULL UNIQUE,
                 teacher_id INT,
                 room       VARCHAR(20),
+                status     ENUM('Active','Inactive') DEFAULT 'Active',
+                is_deleted BOOLEAN DEFAULT FALSE,
+                deleted_at DATETIME,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
             )
         """)
 
-        # Subjects table
+        # Subjects table with soft delete and status
         cur.execute("""
             CREATE TABLE IF NOT EXISTS subjects (
                 id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -115,12 +113,15 @@ class Database:
                 subject_code VARCHAR(20)  NOT NULL UNIQUE,
                 credits      INT DEFAULT 3,
                 teacher_id   INT,
+                status       ENUM('Active','Inactive') DEFAULT 'Active',
+                is_deleted   BOOLEAN DEFAULT FALSE,
+                deleted_at   DATETIME,
                 created      DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
             )
         """)
 
-        # Class-Subject junction table (many-to-many)
+        # Class-Subject junction table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS class_subjects (
                 class_id   INT NOT NULL,
@@ -131,7 +132,7 @@ class Database:
             )
         """)
 
-        # Students table
+        # Students table with soft delete and status
         cur.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -144,6 +145,8 @@ class Database:
                 address    TEXT,
                 class_id   INT,
                 status     ENUM('Active','Inactive') DEFAULT 'Active',
+                is_deleted BOOLEAN DEFAULT FALSE,
+                deleted_at DATETIME,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL
             )
@@ -177,9 +180,7 @@ class Database:
             )
         """)
 
-        # Sample data seeding
         self._seed_data(cur)
-
         self.commit()
         self.conn.database = "student_management_db"
 
@@ -188,58 +189,57 @@ class Database:
         # Seed admin user
         admin_pw = hashlib.sha256("admin123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email)
-            VALUES ('admin', %s, 'admin', 'System Administrator', 'admin@school.edu')
+            INSERT IGNORE INTO users (username, password, role, full_name, email, status, is_deleted)
+            VALUES ('admin', %s, 'admin', 'System Administrator', 'admin@school.edu', 'Active', FALSE)
         """, (admin_pw,))
 
         # Seed teacher
         teacher_pw = hashlib.sha256("teacher123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO teachers (teacher_id, full_name, email, phone)
-            VALUES ('TCH001', 'Prof. John Smith', 'john.smith@school.edu', '555-0101')
+            INSERT IGNORE INTO teachers (teacher_id, full_name, email, phone, status, is_deleted)
+            VALUES ('TCH001', 'Prof. John Smith', 'john.smith@school.edu', '555-0101', 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, teacher_id)
-            VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
+            VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1, 'Active', FALSE)
         """, (teacher_pw,))
 
         # Seed class
         cur.execute("""
-            INSERT IGNORE INTO classes (class_name, teacher_id, room)
-            VALUES ('Grade 10 - Section A', 1, 'Room 101')
+            INSERT IGNORE INTO classes (class_name, teacher_id, room, status, is_deleted)
+            VALUES ('Grade 10 - Section A', 1, 'Room 101', 'Active', FALSE)
         """)
 
         # Seed subjects
         cur.execute("""
-            INSERT IGNORE INTO subjects (subject_name, subject_code, credits, teacher_id)
+            INSERT IGNORE INTO subjects (subject_name, subject_code, credits, teacher_id, status, is_deleted)
             VALUES 
-                ('Mathematics', 'MATH101', 4, 1),
-                ('Physics', 'PHY101', 4, 1),
-                ('English', 'ENG101', 3, 1)
+                ('Mathematics', 'MATH101', 4, 1, 'Active', FALSE),
+                ('Physics', 'PHY101', 4, 1, 'Active', FALSE),
+                ('English', 'ENG101', 3, 1, 'Active', FALSE)
         """)
         
-        # Link subjects to class
         cur.execute("INSERT IGNORE INTO class_subjects (class_id, subject_id) VALUES (1,1), (1,2), (1,3)")
 
         # Seed student
         student_pw = hashlib.sha256("student123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status)
-            VALUES ('STU001', 'Alice Johnson', 'Female', 'alice@student.edu', '555-0201', 1, 'Active')
+            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
+            VALUES ('STU001', 'Alice Johnson', 'Female', 'alice@student.edu', '555-0201', 1, 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id)
-            VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001')
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, status, is_deleted)
+            VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001', 'Active', FALSE)
         """, (student_pw,))
 
         # Seed another student
         cur.execute("""
-            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status)
-            VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', '555-0202', 1, 'Active')
+            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
+            VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', '555-0202', 1, 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id)
-            VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002')
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, status, is_deleted)
+            VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002', 'Active', FALSE)
         """, (student_pw,))
 
 
@@ -250,101 +250,40 @@ def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
-#  LOGIN CLASS
-class LoginPage(ctk.CTkToplevel):
-    def __init__(self, master=None, on_login_success=None):
-        super().__init__(master)
-        self.title("Student Management System - Login")
-        self.geometry("420x520")
-        self.resizable(False, False)
-        self.configure(fg_color=BG_DARK)
-        self.on_login_success = on_login_success
-        
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() // 2) - (420 // 2)
-        y = (self.winfo_screenheight() // 2) - (520 // 2)
-        self.geometry(f"+{x}+{y}")
-        
-        self.login_result = None
-        self.grab_set()
-        self._build()
-        
-    def _build(self):
-        main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(expand=True, fill="both", padx=40, pady=40)
-        
-        ctk.CTkLabel(main_frame, text="🎓", font=ctk.CTkFont(size=48)).pack(pady=(0, 10))
-        ctk.CTkLabel(main_frame, text="Student Management System",
-                     font=ctk.CTkFont(size=24, weight="bold"),
-                     text_color=PRIMARY).pack(pady=(0, 5))
-        ctk.CTkLabel(main_frame, text="Please login to continue",
-                     font=ctk.CTkFont(size=12),
-                     text_color=SUBTEXT).pack(pady=(0, 30))
-        
-        form_frame = ctk.CTkFrame(main_frame, fg_color=CARD, corner_radius=12)
-        form_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(form_frame, text="Username",
-                     text_color=SUBTEXT, anchor="w").pack(padx=20, pady=(20, 5))
-        self.username_entry = StyledEntry(form_frame, placeholder="Enter username")
-        self.username_entry.pack(padx=20, pady=(0, 15), fill="x")
-        
-        ctk.CTkLabel(form_frame, text="Password",
-                     text_color=SUBTEXT, anchor="w").pack(padx=20, pady=(0, 5))
-        self.password_entry = StyledEntry(form_frame, placeholder="Enter password", show="•")
-        self.password_entry.pack(padx=20, pady=(0, 20), fill="x")
-        
-        StyledButton(form_frame, "Login", color=PRIMARY, hover=PRIMARY_H,
-                     command=self._do_login).pack(padx=20, pady=(0, 20), fill="x")
-        
-        info_frame = ctk.CTkFrame(main_frame, fg_color=CARD2, corner_radius=8)
-        info_frame.pack(fill="x", pady=(20, 0))
-        
-        ctk.CTkLabel(info_frame, text="Demo Credentials:",
-                     font=ctk.CTkFont(weight="bold"),
-                     text_color=TEXT).pack(pady=(10, 5))
-        
-        creds = [
-            ("👑 Admin", "admin / admin123"),
-            ("👨‍🏫 Teacher", "teacher / teacher123"),
-            ("👨‍🎓 Student 1", "student / student123"),
-            ("👩‍🎓 Student 2", "student2 / student123"),
-        ]
-        
-        for role, cred in creds:
-            ctk.CTkLabel(info_frame, text=f"{role}: {cred}",
-                         text_color=SUBTEXT, font=ctk.CTkFont(size=11)).pack(pady=2)
-        
-        self.bind("<Return>", lambda e: self._do_login())
-        
-    def _do_login(self):
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get()
-        
-        if not username or not password:
-            messagebox.showwarning("Login Error", "Please enter both username and password", parent=self)
-            return
-        
-        try:
-            cur = db.cursor(dictionary=True)
-            cur.execute("""
-                SELECT id, username, role, full_name, student_id, teacher_id, email
-                FROM users WHERE username=%s AND password=%s
-            """, (username, hash_pw(password)))
-            user = cur.fetchone()
-            
-            if user:
-                self.login_result = user
-                self.destroy()
-                if self.on_login_success:
-                    self.on_login_success(user)
-            else:
-                messagebox.showerror("Login Failed", "Invalid username or password", parent=self)
-        except Exception as e:
-            messagebox.showerror("Database Error", str(e), parent=self)
+# ========== REUSABLE WIDGETS ==========
+class StyledEntry(ctk.CTkEntry):
+    def __init__(self, master, placeholder="", show="", **kw):
+        super().__init__(master,
+                         placeholder_text=placeholder,
+                         show=show,
+                         fg_color=CARD2,
+                         border_color=BORDER,
+                         text_color=TEXT,
+                         placeholder_text_color=SUBTEXT,
+                         height=38,
+                         **kw)
 
 
-#  SCROLLABLE PAGE
+class StyledButton(ctk.CTkButton):
+    def __init__(self, master, text="", color=PRIMARY, hover=PRIMARY_H, **kw):
+        super().__init__(master,
+                         text=text,
+                         fg_color=color,
+                         hover_color=hover,
+                         text_color=TEXT,
+                         height=38,
+                         corner_radius=8,
+                         **kw)
+
+
+class SectionLabel(ctk.CTkLabel):
+    def __init__(self, master, text, **kw):
+        super().__init__(master, text=text,
+                         font=ctk.CTkFont(size=18, weight="bold"),
+                         text_color=TEXT, **kw)
+
+
+# ========== SCROLLABLE PAGE ==========
 class ScrollablePage(ctk.CTkFrame):
     def __init__(self, master, **kw):
         super().__init__(master, fg_color="transparent", **kw)
@@ -388,39 +327,6 @@ class ScrollablePage(ctk.CTkFrame):
         self._canvas.yview_moveto(0)
 
 
-#  REUSABLE WIDGETS
-class StyledEntry(ctk.CTkEntry):
-    def __init__(self, master, placeholder="", show="", **kw):
-        super().__init__(master,
-                         placeholder_text=placeholder,
-                         show=show,
-                         fg_color=CARD2,
-                         border_color=BORDER,
-                         text_color=TEXT,
-                         placeholder_text_color=SUBTEXT,
-                         height=38,
-                         **kw)
-
-
-class StyledButton(ctk.CTkButton):
-    def __init__(self, master, text="", color=PRIMARY, hover=PRIMARY_H, **kw):
-        super().__init__(master,
-                         text=text,
-                         fg_color=color,
-                         hover_color=hover,
-                         text_color=TEXT,
-                         height=38,
-                         corner_radius=8,
-                         **kw)
-
-
-class SectionLabel(ctk.CTkLabel):
-    def __init__(self, master, text, **kw):
-        super().__init__(master, text=text,
-                         font=ctk.CTkFont(size=18, weight="bold"),
-                         text_color=TEXT, **kw)
-
-
 def styled_table(parent, columns, col_widths=None):
     style = ttk.Style()
     style.theme_use("default")
@@ -461,9 +367,7 @@ class ProfileDialog(ctk.CTkToplevel):
         self.on_update = on_update
         self.grab_set()
 
-        ctk.CTkLabel(self, text="👤  My Profile",
-                     font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(self, "Profile Settings").pack(pady=(20, 10))
 
         form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
@@ -495,13 +399,13 @@ class ProfileDialog(ctk.CTkToplevel):
         
         ctk.CTkLabel(form, text="New Password", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
-        self.new_pw_entry = StyledEntry(form, placeholder="Enter new password", show="•")
+        self.new_pw_entry = StyledEntry(form, placeholder="Enter new password", show="*")
         self.new_pw_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
         
         ctk.CTkLabel(form, text="Confirm Password", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
-        self.confirm_pw_entry = StyledEntry(form, placeholder="Confirm new password", show="•")
+        self.confirm_pw_entry = StyledEntry(form, placeholder="Confirm new password", show="*")
         self.confirm_pw_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
 
@@ -509,7 +413,7 @@ class ProfileDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=self.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Update Profile",
+        StyledButton(btn_row, "Update Profile",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
     def _save(self):
@@ -539,16 +443,14 @@ class StudentDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Student", data=None, on_save=None, teacher_mode=False):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x650")
+        self.geometry("500x700")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
         self.teacher_mode = teacher_mode
         self.grab_set()
 
-        ctk.CTkLabel(self, text=title,
-                     font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(self, title).pack(pady=(20, 10))
 
         form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
@@ -598,10 +500,11 @@ class StudentDialog(ctk.CTkToplevel):
         class_names = [v for _, v in classes]
         current_class = data.get("class_name", "") if data else ""
         self.class_var = ctk.StringVar(value=current_class if current_class in class_names else (class_names[0] if class_names else ""))
-        ctk.CTkOptionMenu(form, variable=self.class_var,
-                          values=class_names or ["(no classes)"],
-                          fg_color=CARD2, button_color=PRIMARY,
-                          dropdown_fg_color=CARD).grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        self.class_menu = ctk.CTkOptionMenu(form, variable=self.class_var,
+                                            values=class_names or ["(no classes)"],
+                                            fg_color=CARD2, button_color=PRIMARY,
+                                            dropdown_fg_color=CARD)
+        self.class_menu.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
 
         ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
@@ -616,13 +519,13 @@ class StudentDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=self.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Save",
+        StyledButton(btn_row, "Save Student",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
     def _load_classes(self):
         try:
             cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id, class_name FROM classes")
+            cur.execute("SELECT id, class_name FROM classes WHERE is_deleted = FALSE AND status = 'Active'")
             return [(r["id"], r["class_name"]) for r in cur.fetchall()]
         except Exception:
             return []
@@ -645,15 +548,13 @@ class TeacherDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Teacher", data=None, on_save=None):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x600")
+        self.geometry("500x650")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
         self.grab_set()
 
-        ctk.CTkLabel(self, text=title,
-                     font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(self, title).pack(pady=(20, 10))
 
         form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
@@ -679,6 +580,15 @@ class TeacherDialog(ctk.CTkToplevel):
             self.vars[key] = e
             row += 1
 
+        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
+        ctk.CTkOptionMenu(form, variable=self.status_var,
+                          values=["Active", "Inactive"],
+                          fg_color=CARD2, button_color=PRIMARY,
+                          dropdown_fg_color=CARD).grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+
         ctk.CTkLabel(form, text="Username (for login)", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
         self.username_entry = StyledEntry(form, placeholder="username", width=280)
@@ -689,7 +599,7 @@ class TeacherDialog(ctk.CTkToplevel):
         
         ctk.CTkLabel(form, text="Password (for new account)", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
-        self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="•", width=280)
+        self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="*", width=280)
         self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
 
@@ -697,7 +607,7 @@ class TeacherDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=self.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Save",
+        StyledButton(btn_row, "Save Teacher",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
     def _save(self):
@@ -706,6 +616,7 @@ class TeacherDialog(ctk.CTkToplevel):
             messagebox.showwarning("Validation", "Teacher ID and Full Name are required.", parent=self)
             return
         
+        vals["status"] = self.status_var.get()
         vals["username"] = self.username_entry.get().strip()
         vals["password"] = self.password_entry.get()
         
@@ -718,22 +629,19 @@ class ClassDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Class", data=None, on_save=None):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x550")
+        self.geometry("500x600")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
         self.data = data
         self.grab_set()
 
-        ctk.CTkLabel(self, text=title,
-                     font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(self, title).pack(pady=(20, 10))
 
         form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
         form.columnconfigure(1, weight=1)
 
-        # Class Name
         ctk.CTkLabel(form, text="Class Name", text_color=SUBTEXT,
                      anchor="w").grid(row=0, column=0, padx=16, pady=6, sticky="w")
         self.name_entry = StyledEntry(form, placeholder="e.g. Grade 10 - Section A", width=280)
@@ -741,7 +649,6 @@ class ClassDialog(ctk.CTkToplevel):
         if data:
             self.name_entry.insert(0, data.get("class_name", ""))
         
-        # Teacher
         ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
                      anchor="w").grid(row=1, column=0, padx=16, pady=6, sticky="w")
         teachers = self._load_teachers()
@@ -755,7 +662,6 @@ class ClassDialog(ctk.CTkToplevel):
                                               dropdown_fg_color=CARD)
         self.teacher_menu.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
         
-        # Room
         ctk.CTkLabel(form, text="Room", text_color=SUBTEXT,
                      anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
         self.room_entry = StyledEntry(form, placeholder="Room number", width=280)
@@ -763,15 +669,22 @@ class ClassDialog(ctk.CTkToplevel):
         if data:
             self.room_entry.insert(0, data.get("room", ""))
         
-        # Subjects section
+        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
+                     anchor="w").grid(row=3, column=0, padx=16, pady=6, sticky="w")
+        self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
+        ctk.CTkOptionMenu(form, variable=self.status_var,
+                          values=["Active", "Inactive"],
+                          fg_color=CARD2, button_color=PRIMARY,
+                          dropdown_fg_color=CARD).grid(row=3, column=1, padx=16, pady=6, sticky="ew")
+        
         ctk.CTkLabel(form, text="Subjects in this Class", text_color=SUBTEXT,
-                     font=ctk.CTkFont(weight="bold")).grid(row=3, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
+                     font=ctk.CTkFont(weight="bold")).grid(row=4, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
         
         subjects = self._load_subjects()
         self.subject_vars = {}
         
         subject_frame = ctk.CTkFrame(form, fg_color=CARD2, corner_radius=8)
-        subject_frame.grid(row=4, column=0, columnspan=2, padx=16, pady=6, sticky="ew")
+        subject_frame.grid(row=5, column=0, columnspan=2, padx=16, pady=6, sticky="ew")
         
         existing_subjects = self._get_class_subjects() if data else []
         
@@ -787,13 +700,13 @@ class ClassDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=self.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Save",
+        StyledButton(btn_row, "Save Class",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
     def _load_teachers(self):
         try:
             cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id, full_name FROM teachers")
+            cur.execute("SELECT id, full_name FROM teachers WHERE is_deleted = FALSE AND status = 'Active'")
             return [("None", "None")] + [(r["id"], r["full_name"]) for r in cur.fetchall()]
         except Exception:
             return [("None", "None")]
@@ -801,7 +714,7 @@ class ClassDialog(ctk.CTkToplevel):
     def _load_subjects(self):
         try:
             cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id, subject_name FROM subjects ORDER BY subject_name")
+            cur.execute("SELECT id, subject_name FROM subjects WHERE is_deleted = FALSE AND status = 'Active' ORDER BY subject_name")
             return [(r["id"], r["subject_name"]) for r in cur.fetchall()]
         except Exception:
             return []
@@ -833,8 +746,112 @@ class ClassDialog(ctk.CTkToplevel):
                 "class_name": name,
                 "teacher_id": teacher_id,
                 "room": self.room_entry.get().strip() or None,
+                "status": self.status_var.get(),
                 "subjects": selected_subjects,
                 "class_id": self.data.get("id") if self.data else None
+            })
+        self.destroy()
+
+
+class SubjectDialog(ctk.CTkToplevel):
+    def __init__(self, master, title="Subject", data=None, on_save=None):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("500x500")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_DARK)
+        self.on_save = on_save
+        self.data = data
+        self.grab_set()
+
+        SectionLabel(self, title).pack(pady=(20, 10))
+
+        form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
+        form.pack(fill="both", expand=True, padx=20, pady=10)
+        form.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(form, text="Subject Name", text_color=SUBTEXT,
+                     anchor="w").grid(row=0, column=0, padx=16, pady=6, sticky="w")
+        self.name_entry = StyledEntry(form, placeholder="e.g. Mathematics", width=280)
+        self.name_entry.grid(row=0, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.name_entry.insert(0, data.get("subject_name", ""))
+        
+        ctk.CTkLabel(form, text="Subject Code", text_color=SUBTEXT,
+                     anchor="w").grid(row=1, column=0, padx=16, pady=6, sticky="w")
+        self.code_entry = StyledEntry(form, placeholder="e.g. MATH101", width=280)
+        self.code_entry.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.code_entry.insert(0, data.get("subject_code", ""))
+        
+        ctk.CTkLabel(form, text="Credits", text_color=SUBTEXT,
+                     anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
+        self.credits_entry = StyledEntry(form, placeholder="3", width=280)
+        self.credits_entry.grid(row=2, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.credits_entry.insert(0, str(data.get("credits", "3")))
+        
+        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
+                     anchor="w").grid(row=3, column=0, padx=16, pady=6, sticky="w")
+        teachers = self._load_teachers()
+        self.teacher_map = {v: k for k, v in teachers}
+        teacher_names = [v for _, v in teachers]
+        current_teacher = ""
+        if data and data.get("teacher_name"):
+            current_teacher = data.get("teacher_name")
+        self.teacher_var = ctk.StringVar(value=current_teacher if current_teacher in teacher_names else (teacher_names[0] if teacher_names else "None"))
+        ctk.CTkOptionMenu(form, variable=self.teacher_var,
+                         values=teacher_names or ["None"],
+                         fg_color=CARD2, button_color=PRIMARY,
+                         dropdown_fg_color=CARD).grid(row=3, column=1, padx=16, pady=6, sticky="ew")
+        
+        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
+                     anchor="w").grid(row=4, column=0, padx=16, pady=6, sticky="w")
+        self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
+        ctk.CTkOptionMenu(form, variable=self.status_var,
+                          values=["Active", "Inactive"],
+                          fg_color=CARD2, button_color=PRIMARY,
+                          dropdown_fg_color=CARD).grid(row=4, column=1, padx=16, pady=6, sticky="ew")
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=16)
+        StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
+                     command=self.destroy).pack(side="left", expand=True, padx=4)
+        StyledButton(btn_row, "Save Subject",
+                     command=self._save).pack(side="left", expand=True, padx=4)
+
+    def _load_teachers(self):
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("SELECT id, full_name FROM teachers WHERE is_deleted = FALSE AND status = 'Active'")
+            return [("None", "None")] + [(r["id"], r["full_name"]) for r in cur.fetchall()]
+        except Exception:
+            return [("None", "None")]
+
+    def _save(self):
+        name = self.name_entry.get().strip()
+        code = self.code_entry.get().strip()
+        if not name or not code:
+            messagebox.showwarning("Validation", "Subject Name and Code are required.", parent=self)
+            return
+        
+        try:
+            credits = int(self.credits_entry.get() or 3)
+        except ValueError:
+            credits = 3
+        
+        teacher_id = self.teacher_map.get(self.teacher_var.get())
+        if teacher_id == "None":
+            teacher_id = None
+        
+        if self.on_save:
+            self.on_save({
+                "subject_name": name,
+                "subject_code": code,
+                "credits": credits,
+                "teacher_id": teacher_id,
+                "status": self.status_var.get(),
+                "subject_id": self.data.get("id") if self.data else None
             })
         self.destroy()
 
@@ -842,7 +859,7 @@ class ClassDialog(ctk.CTkToplevel):
 class ScoreDialog(ctk.CTkToplevel):
     def __init__(self, master, student_id, student_name, on_save=None):
         super().__init__(master)
-        self.title(f"Scores – {student_name}")
+        self.title(f"Scores - {student_name}")
         self.geometry("480x420")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
@@ -850,9 +867,7 @@ class ScoreDialog(ctk.CTkToplevel):
         self.student_id = student_id
         self.grab_set()
 
-        ctk.CTkLabel(self, text=f"📊  Scores: {student_name}",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(self, f"Scores: {student_name}").pack(pady=(20, 10))
 
         form = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
@@ -886,7 +901,7 @@ class ScoreDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=self.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Save Scores",
+        StyledButton(btn_row, "Save Scores",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
     def _load_subjects(self):
@@ -897,7 +912,7 @@ class ScoreDialog(ctk.CTkToplevel):
                 FROM subjects s
                 JOIN class_subjects cs ON s.id = cs.subject_id
                 JOIN students st ON st.class_id = cs.class_id
-                WHERE st.id = %s
+                WHERE st.id = %s AND s.is_deleted = FALSE AND s.status = 'Active'
             """, (self.student_id,))
             return [(r["id"], r["subject_name"]) for r in cur.fetchall()]
         except Exception:
@@ -929,30 +944,7 @@ class ScoreDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-#  SIDEBAR NAV
-class SidebarButton(ctk.CTkButton):
-    def __init__(self, master, text, icon, command, **kw):
-        super().__init__(master,
-                         text=f"  {icon}  {text}",
-                         fg_color="transparent",
-                         hover_color=CARD2,
-                         text_color=SUBTEXT,
-                         anchor="w",
-                         height=44,
-                         corner_radius=8,
-                         font=ctk.CTkFont(size=13),
-                         command=command, **kw)
-        self._active = False
-
-    def set_active(self, active):
-        self._active = active
-        if active:
-            self.configure(fg_color=PRIMARY, text_color=TEXT)
-        else:
-            self.configure(fg_color="transparent", text_color=SUBTEXT)
-
-
-#  PAGE FRAMES
+# ========== PAGE FRAMES ==========
 class DashboardPage(ScrollablePage):
     def __init__(self, master, user_data):
         super().__init__(master)
@@ -960,11 +952,10 @@ class DashboardPage(ScrollablePage):
         self._build()
 
     def _build(self):
-        SectionLabel(self.inner, "📊  Dashboard").pack(anchor="w", padx=24, pady=(24, 16))
+        SectionLabel(self.inner, "Dashboard").pack(anchor="w", padx=24, pady=(24, 16))
         
-        role_display = self.user_data['role'].upper()
         ctk.CTkLabel(self.inner, 
-                     text=f"Welcome back, {self.user_data['full_name']} ({role_display})",
+                     text=f"Welcome back, {self.user_data['full_name']} ({self.user_data['role'].upper()})",
                      font=ctk.CTkFont(size=14), text_color=SUBTEXT).pack(anchor="w", padx=24, pady=(0, 20))
 
         stats_row = ctk.CTkFrame(self.inner, fg_color="transparent")
@@ -975,35 +966,35 @@ class DashboardPage(ScrollablePage):
         
         if self.user_data['role'] == 'admin':
             specs = [
-                ("Total Students", "👨‍🎓", PRIMARY, "students"),
-                ("Active",         "✅",  SUCCESS,   "active"),
-                ("Teachers",       "👨‍🏫", "#A855F7", "teachers"),
-                ("Subjects",       "📚",  WARNING,   "subjects"),
+                ("Total Students", PRIMARY, "students"),
+                ("Active Students", SUCCESS, "active"),
+                ("Active Teachers", "#A855F7", "teachers"),
+                ("Active Subjects", WARNING, "subjects"),
             ]
         elif self.user_data['role'] == 'teacher':
             specs = [
-                ("My Students",    "👨‍🎓", PRIMARY, "students"),
-                ("Active",         "✅",  SUCCESS,   "active"),
-                ("My Class",       "🏫",  WARNING,   "class"),
-                ("Subjects",       "📚",  "#A855F7", "subjects"),
+                ("My Students", PRIMARY, "students"),
+                ("Active Students", SUCCESS, "active"),
+                ("My Class", WARNING, "class"),
+                ("My Subjects", "#A855F7", "subjects"),
             ]
         else:
             specs = [
-                ("My Scores",      "📊", PRIMARY, "scores_count"),
-                ("Average",        "📈", SUCCESS, "average"),
-                ("Rank",           "🏆", WARNING, "rank"),
-                ("Status",         "✅", "#A855F7", "status"),
+                ("My Scores", PRIMARY, "scores_count"),
+                ("Average", SUCCESS, "average"),
+                ("Rank", WARNING, "rank"),
+                ("Status", "#A855F7", "status"),
             ]
         
-        for col, (label, icon, color, key) in enumerate(specs):
+        for col, (label, color, key) in enumerate(specs):
             card = ctk.CTkFrame(stats_row, fg_color=CARD, corner_radius=14, height=110)
             card.grid(row=0, column=col, padx=8, sticky="ew")
             card.pack_propagate(False)
-            ctk.CTkLabel(card, text=icon, font=ctk.CTkFont(size=28)).pack(pady=(16, 2))
-            val = ctk.CTkLabel(card, text="–",
+            
+            val = ctk.CTkLabel(card, text="-",
                                font=ctk.CTkFont(size=24, weight="bold"),
                                text_color=color)
-            val.pack()
+            val.pack(pady=(20, 2))
             ctk.CTkLabel(card, text=label, font=ctk.CTkFont(size=11),
                          text_color=SUBTEXT).pack(pady=(0, 12))
             self.stat_cards[key] = val
@@ -1011,19 +1002,21 @@ class DashboardPage(ScrollablePage):
         if self.user_data['role'] != 'student':
             table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
             table_frame.pack(fill="both", expand=True, padx=24, pady=20)
-            ctk.CTkLabel(table_frame, text="🕑  Recent Students",
+            
+            ctk.CTkLabel(table_frame, text="Recent Students",
                          font=ctk.CTkFont(size=14, weight="bold"),
                          text_color=TEXT).pack(anchor="w", padx=16, pady=12)
 
-            cols = ["ID", "Name", "Class", "Status", "Added"]
-            widths = [80, 200, 120, 90, 140]
+            cols = ["ID", "Name", "Class", "Status", "Added Date"]
+            widths = [80, 200, 120, 90, 100]
             self.tree, sb = styled_table(table_frame, cols, widths)
             self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=(0, 16))
             sb.pack(side="right", fill="y", pady=(0, 16), padx=(0, 8))
         else:
             score_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
             score_frame.pack(fill="both", expand=True, padx=24, pady=20)
-            ctk.CTkLabel(score_frame, text="📖  My Academic Performance",
+            
+            ctk.CTkLabel(score_frame, text="My Academic Performance",
                          font=ctk.CTkFont(size=14, weight="bold"),
                          text_color=TEXT).pack(anchor="w", padx=16, pady=12)
             
@@ -1040,58 +1033,61 @@ class DashboardPage(ScrollablePage):
             cur = db.cursor(dictionary=True)
             
             if self.user_data['role'] == 'admin':
-                cur.execute("SELECT COUNT(*) AS n FROM students")
+                cur.execute("SELECT COUNT(*) AS n FROM students WHERE is_deleted = FALSE")
                 self.stat_cards["students"].configure(text=cur.fetchone()["n"])
-                cur.execute("SELECT COUNT(*) AS n FROM students WHERE status='Active'")
+                cur.execute("SELECT COUNT(*) AS n FROM students WHERE status='Active' AND is_deleted = FALSE")
                 self.stat_cards["active"].configure(text=cur.fetchone()["n"])
-                cur.execute("SELECT COUNT(*) AS n FROM teachers")
+                cur.execute("SELECT COUNT(*) AS n FROM teachers WHERE is_deleted = FALSE AND status='Active'")
                 self.stat_cards["teachers"].configure(text=cur.fetchone()["n"])
-                cur.execute("SELECT COUNT(*) AS n FROM subjects")
+                cur.execute("SELECT COUNT(*) AS n FROM subjects WHERE is_deleted = FALSE AND status='Active'")
                 self.stat_cards["subjects"].configure(text=cur.fetchone()["n"])
 
                 cur.execute("""
                     SELECT s.student_id, s.full_name, c.class_name, s.status,
-                           DATE_FORMAT(s.created,'%%Y-%%m-%%d') AS created
+                           DATE(s.created) AS created
                     FROM students s
                     LEFT JOIN classes c ON s.class_id=c.id
+                    WHERE s.is_deleted = FALSE
                     ORDER BY s.created DESC LIMIT 10
                 """)
                 self.tree.delete(*self.tree.get_children())
                 for r in cur.fetchall():
+                    created_date = str(r["created"]) if r["created"] else "-"
                     self.tree.insert("", "end",
                                      values=(r["student_id"], r["full_name"],
-                                             r["class_name"] or "—", r["status"], r["created"]))
+                                             r["class_name"] or "-", r["status"], created_date))
                     
             elif self.user_data['role'] == 'teacher':
                 cur.execute("""
                     SELECT c.id, c.class_name FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
-                    WHERE t.id = %s
+                    WHERE t.id = %s AND c.is_deleted = FALSE
                 """, (self.user_data['teacher_id'],))
                 class_info = cur.fetchone()
                 
                 if class_info:
-                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s", (class_info['id'],))
+                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s AND is_deleted = FALSE", (class_info['id'],))
                     self.stat_cards["students"].configure(text=cur.fetchone()["n"])
-                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s AND status='Active'", (class_info['id'],))
+                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s AND status='Active' AND is_deleted = FALSE", (class_info['id'],))
                     self.stat_cards["active"].configure(text=cur.fetchone()["n"])
                     self.stat_cards["class"].configure(text=class_info['class_name'][:15])
-                    cur.execute("SELECT COUNT(*) AS n FROM subjects")
+                    cur.execute("SELECT COUNT(*) AS n FROM subjects WHERE is_deleted = FALSE AND status='Active'")
                     self.stat_cards["subjects"].configure(text=cur.fetchone()["n"])
                     
                     cur.execute("""
                         SELECT s.student_id, s.full_name, c.class_name, s.status,
-                               DATE_FORMAT(s.created,'%%Y-%%m-%%d') AS created
+                               DATE(s.created) AS created
                         FROM students s
                         LEFT JOIN classes c ON s.class_id=c.id
-                        WHERE s.class_id = %s
+                        WHERE s.class_id = %s AND s.is_deleted = FALSE
                         ORDER BY s.created DESC LIMIT 10
                     """, (class_info['id'],))
                     self.tree.delete(*self.tree.get_children())
                     for r in cur.fetchall():
+                        created_date = str(r["created"]) if r["created"] else "-"
                         self.tree.insert("", "end",
                                          values=(r["student_id"], r["full_name"],
-                                                 r["class_name"] or "—", r["status"], r["created"]))
+                                                 r["class_name"] or "-", r["status"], created_date))
                 else:
                     self.stat_cards["students"].configure(text="0")
                     self.stat_cards["active"].configure(text="0")
@@ -1101,18 +1097,18 @@ class DashboardPage(ScrollablePage):
             else:
                 cur.execute("""
                     SELECT COUNT(id) AS n FROM scores 
-                    WHERE student_id = (SELECT id FROM students WHERE student_id=%s)
+                    WHERE student_id = (SELECT id FROM students WHERE student_id=%s AND is_deleted = FALSE)
                 """, (self.user_data['student_id'],))
                 self.stat_cards["scores_count"].configure(text=cur.fetchone()["n"] or "0")
                 
                 cur.execute("""
                     SELECT ROUND(AVG(total),1) AS avg FROM scores 
-                    WHERE student_id = (SELECT id FROM students WHERE student_id=%s)
+                    WHERE student_id = (SELECT id FROM students WHERE student_id=%s AND is_deleted = FALSE)
                 """, (self.user_data['student_id'],))
                 avg = cur.fetchone()["avg"] or 0
                 self.stat_cards["average"].configure(text=str(avg))
                 
-                cur.execute("SELECT status FROM students WHERE student_id=%s", (self.user_data['student_id'],))
+                cur.execute("SELECT status FROM students WHERE student_id=%s AND is_deleted = FALSE", (self.user_data['student_id'],))
                 status = cur.fetchone()
                 self.stat_cards["status"].configure(text=status['status'] if status else "Active")
                 
@@ -1120,7 +1116,7 @@ class DashboardPage(ScrollablePage):
                     SELECT sub.subject_name, sc.midterm, sc.final, sc.total, sc.grade
                     FROM scores sc
                     JOIN subjects sub ON sc.subject_id = sub.id
-                    WHERE sc.student_id = (SELECT id FROM students WHERE student_id=%s)
+                    WHERE sc.student_id = (SELECT id FROM students WHERE student_id=%s AND is_deleted = FALSE)
                     ORDER BY sub.subject_name
                 """, (self.user_data['student_id'],))
                 
@@ -1142,21 +1138,24 @@ class StudentsPage(ScrollablePage):
     def _build(self):
         top = ctk.CTkFrame(self.inner, fg_color="transparent")
         top.pack(fill="x", padx=24, pady=(24, 0))
-        SectionLabel(top, "👨‍🎓  Students").pack(side="left")
+        SectionLabel(top, "Students").pack(side="left")
 
         btn_bar = ctk.CTkFrame(top, fg_color="transparent")
         btn_bar.pack(side="right")
         
         if self.user_data['role'] == 'admin':
-            StyledButton(btn_bar, "➕ Add", command=self._add).pack(side="left", padx=4)
-            StyledButton(btn_bar, "✏️ Edit", color=WARNING, hover="#D97706",
+            StyledButton(btn_bar, "Add", color=SUCCESS, hover="#059669",
+                         command=self._add).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Edit", color=WARNING, hover="#D97706",
                          command=self._edit).pack(side="left", padx=4)
-            StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
+            StyledButton(btn_bar, "Delete", color=DANGER, hover="#DC2626",
                          command=self._delete).pack(side="left", padx=4)
-            StyledButton(btn_bar, "📊 Scores", color=SUCCESS, hover="#059669",
+            StyledButton(btn_bar, "Restore", color=PRIMARY, hover=PRIMARY_H,
+                         command=self._restore).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Scores", color=PRIMARY, hover=PRIMARY_H,
                          command=self._scores).pack(side="left", padx=4)
         elif self.user_data['role'] == 'teacher':
-            StyledButton(btn_bar, "📊 Scores", color=SUCCESS, hover="#059669",
+            StyledButton(btn_bar, "Scores", color=PRIMARY, hover=PRIMARY_H,
                          command=self._scores).pack(side="left", padx=4)
             StyledButton(btn_bar, "View Details", color=PRIMARY,
                          command=self._view).pack(side="left", padx=4)
@@ -1165,14 +1164,25 @@ class StudentsPage(ScrollablePage):
         search_row.pack(fill="x", padx=24, pady=10)
         self.search_var = ctk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh())
-        StyledEntry(search_row, placeholder="🔍  Search by name or ID…",
-                    textvariable=self.search_var, width=320).pack(side="left")
+        
+        search_entry = StyledEntry(search_row, placeholder="Search by name or ID...",
+                                    textvariable=self.search_var, width=320)
+        search_entry.pack(side="left")
+
+        # Show deleted checkbox
+        self.show_deleted_var = ctk.BooleanVar(value=False)
+        show_deleted_cb = ctk.CTkCheckBox(search_row, text="Show Deleted", 
+                                          variable=self.show_deleted_var,
+                                          command=self.refresh,
+                                          fg_color=PRIMARY,
+                                          text_color=TEXT)
+        show_deleted_cb.pack(side="left", padx=(10, 0))
 
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        cols  = ["ID", "Name", "Gender", "Email", "Phone", "Class", "Status"]
-        widths = [90, 200, 80, 180, 110, 110, 80]
+        cols  = ["ID", "Name", "Gender", "Email", "Phone", "Class", "Status", "Deleted"]
+        widths = [90, 200, 80, 180, 110, 110, 80, 80]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
@@ -1187,7 +1197,7 @@ class StudentsPage(ScrollablePage):
                 cur.execute("""
                     SELECT c.id FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
-                    WHERE t.id = %s
+                    WHERE t.id = %s AND c.is_deleted = FALSE
                 """, (self.user_data['teacher_id'],))
                 result = cur.fetchone()
                 return result['id'] if result else None
@@ -1198,12 +1208,15 @@ class StudentsPage(ScrollablePage):
     def refresh(self):
         q = self.search_var.get().strip()
         class_filter = self._get_class_filter()
+        show_deleted = self.show_deleted_var.get()
         
         try:
             cur = db.cursor(dictionary=True)
             sql = """
                 SELECT s.id, s.student_id, s.full_name, s.gender,
-                       s.email, s.phone, c.class_name, s.status, s.dob, s.address
+                       s.email, s.phone, c.class_name, s.status, 
+                       s.dob, s.address, s.is_deleted,
+                       DATE(s.deleted_at) as deleted_at
                 FROM students s
                 LEFT JOIN classes c ON s.class_id=c.id
             """
@@ -1213,6 +1226,9 @@ class StudentsPage(ScrollablePage):
             if class_filter:
                 conditions.append("s.class_id = %s")
                 params.append(class_filter)
+            
+            if not show_deleted:
+                conditions.append("s.is_deleted = FALSE")
             
             if q:
                 conditions.append("(s.student_id LIKE %s OR s.full_name LIKE %s)")
@@ -1227,10 +1243,11 @@ class StudentsPage(ScrollablePage):
             
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
+                deleted_status = "Yes" if r["is_deleted"] else "No"
                 self.tree.insert("", "end", iid=r["id"],
                                  values=(r["student_id"], r["full_name"], r["gender"],
-                                         r["email"] or "—", r["phone"] or "—",
-                                         r["class_name"] or "—", r["status"]))
+                                         r["email"] or "-", r["phone"] or "-",
+                                         r["class_name"] or "-", r["status"], deleted_status))
         except Exception as e:
             pass
 
@@ -1259,8 +1276,8 @@ class StudentsPage(ScrollablePage):
         try:
             cur = db.cursor()
             cur.execute("""
-                INSERT INTO students (student_id,full_name,gender,email,phone,address,class_id,status,dob)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                INSERT INTO students (student_id,full_name,gender,email,phone,address,class_id,status,dob,is_deleted)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
             """, (vals["student_id"], vals["full_name"], vals["gender"],
                   vals["email"], vals["phone"], vals["address"],
                   vals["class_id"], vals["status"], vals.get("dob")))
@@ -1275,6 +1292,9 @@ class StudentsPage(ScrollablePage):
         if not data:
             messagebox.showinfo("Select", "Please select a student first.")
             return
+        if data.get("is_deleted"):
+            messagebox.showwarning("Cannot Edit", "Deleted students cannot be edited. Restore them first.")
+            return
         StudentDialog(self, "Edit Student", data=data,
                       on_save=lambda v: self._do_edit(v))
 
@@ -1288,28 +1308,27 @@ class StudentsPage(ScrollablePage):
     def _show_student_details(self, data):
         dialog = ctk.CTkToplevel(self)
         dialog.title(f"Student Details - {data['full_name']}")
-        dialog.geometry("450x500")
+        dialog.geometry("450x550")
         dialog.resizable(False, False)
         dialog.configure(fg_color=BG_DARK)
         dialog.grab_set()
 
-        ctk.CTkLabel(dialog, text="📋  Student Details",
-                     font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(dialog, "Student Details").pack(pady=(20, 10))
 
         form = ctk.CTkFrame(dialog, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
 
         details = [
-            ("Student ID", data.get("student_id", "—")),
-            ("Full Name", data.get("full_name", "—")),
-            ("Gender", data.get("gender", "—")),
-            ("Date of Birth", data.get("dob", "—")),
-            ("Email", data.get("email", "—")),
-            ("Phone", data.get("phone", "—")),
-            ("Class", data.get("class_name", "—")),
-            ("Status", data.get("status", "—")),
-            ("Address", data.get("address", "—")),
+            ("Student ID", data.get("student_id", "-")),
+            ("Full Name", data.get("full_name", "-")),
+            ("Gender", data.get("gender", "-")),
+            ("Date of Birth", data.get("dob", "-")),
+            ("Email", data.get("email", "-")),
+            ("Phone", data.get("phone", "-")),
+            ("Class", data.get("class_name", "-")),
+            ("Status", data.get("status", "-")),
+            ("Deleted", "Yes" if data.get("is_deleted") else "No"),
+            ("Address", data.get("address", "-")),
         ]
 
         for i, (label, value) in enumerate(details):
@@ -1318,7 +1337,8 @@ class StudentsPage(ScrollablePage):
             ctk.CTkLabel(form, text=str(value), text_color=TEXT,
                          anchor="w").grid(row=i, column=1, padx=16, pady=6, sticky="w")
 
-        StyledButton(dialog, "Close", command=dialog.destroy).pack(pady=20)
+        StyledButton(dialog, "Close", color=CARD2, hover=CARD,
+                     command=dialog.destroy).pack(pady=20)
 
     def _do_edit(self, vals):
         try:
@@ -1336,19 +1356,71 @@ class StudentsPage(ScrollablePage):
         except Error as e:
             messagebox.showerror("Error", str(e))
 
+    def _can_delete_student(self):
+        """Check if student can be deleted (no scores)"""
+        try:
+            cur = db.cursor()
+            cur.execute("SELECT COUNT(*) FROM scores WHERE student_id = %s", (self.selected_db_id,))
+            count = cur.fetchone()[0]
+            return count == 0
+        except:
+            return False
+
     def _delete(self):
         if not self.selected_db_id:
             messagebox.showinfo("Select", "Please select a student first.")
             return
-        if messagebox.askyesno("Confirm Delete", "Delete this student and all their scores?"):
+        data = self._get_selected_data()
+        if data and data.get("is_deleted"):
+            messagebox.showwarning("Already Deleted", "This student is already deleted.")
+            return
+        
+        # Check if student has scores
+        if not self._can_delete_student():
+            messagebox.showwarning("Cannot Delete", "This student has scores recorded. You cannot delete students with existing scores.\n\nYou can set their status to 'Inactive' instead.")
+            return
+            
+        if messagebox.askyesno("Confirm Delete", "Soft delete this student? They can be restored later."):
             try:
                 cur = db.cursor()
-                cur.execute("DELETE FROM users WHERE student_id=(SELECT student_id FROM students WHERE id=%s)", (self.selected_db_id,))
-                cur.execute("DELETE FROM students WHERE id=%s", (self.selected_db_id,))
+                cur.execute("""
+                    UPDATE students SET is_deleted = TRUE, deleted_at = NOW() 
+                    WHERE id = %s
+                """, (self.selected_db_id,))
+                cur.execute("""
+                    UPDATE users SET is_deleted = TRUE, deleted_at = NOW()
+                    WHERE student_id = (SELECT student_id FROM students WHERE id = %s)
+                """, (self.selected_db_id,))
                 db.commit()
                 self.selected_db_id = None
                 self.refresh()
-                messagebox.showinfo("Success", "Student deleted successfully!")
+                messagebox.showinfo("Success", "Student soft deleted successfully!")
+            except Error as e:
+                messagebox.showerror("Error", str(e))
+    
+    def _restore(self):
+        if not self.selected_db_id:
+            messagebox.showinfo("Select", "Please select a student first.")
+            return
+        data = self._get_selected_data()
+        if data and not data.get("is_deleted"):
+            messagebox.showwarning("Not Deleted", "This student is not deleted.")
+            return
+        if messagebox.askyesno("Confirm Restore", "Restore this student?"):
+            try:
+                cur = db.cursor()
+                cur.execute("""
+                    UPDATE students SET is_deleted = FALSE, deleted_at = NULL 
+                    WHERE id = %s
+                """, (self.selected_db_id,))
+                cur.execute("""
+                    UPDATE users SET is_deleted = FALSE, deleted_at = NULL
+                    WHERE student_id = (SELECT student_id FROM students WHERE id = %s)
+                """, (self.selected_db_id,))
+                db.commit()
+                self.selected_db_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Student restored successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1356,6 +1428,9 @@ class StudentsPage(ScrollablePage):
         data = self._get_selected_data()
         if not data:
             messagebox.showinfo("Select", "Please select a student first.")
+            return
+        if data.get("is_deleted"):
+            messagebox.showwarning("Cannot Edit Scores", "Deleted students cannot have scores edited.")
             return
         name = data['full_name']
         ScoreDialog(self, self.selected_db_id, name, on_save=self._do_scores)
@@ -1385,28 +1460,40 @@ class TeachersPage(ScrollablePage):
     def _build(self):
         top = ctk.CTkFrame(self.inner, fg_color="transparent")
         top.pack(fill="x", padx=24, pady=(24, 0))
-        SectionLabel(top, "👨‍🏫  Teachers").pack(side="left")
+        SectionLabel(top, "Teachers").pack(side="left")
 
         btn_bar = ctk.CTkFrame(top, fg_color="transparent")
         btn_bar.pack(side="right")
-        StyledButton(btn_bar, "➕ Add", command=self._add).pack(side="left", padx=4)
-        StyledButton(btn_bar, "✏️ Edit", color=WARNING, hover="#D97706",
+        StyledButton(btn_bar, "Add", color=SUCCESS, hover="#059669",
+                     command=self._add).pack(side="left", padx=4)
+        StyledButton(btn_bar, "Edit", color=WARNING, hover="#D97706",
                      command=self._edit).pack(side="left", padx=4)
-        StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
+        StyledButton(btn_bar, "Delete", color=DANGER, hover="#DC2626",
                      command=self._delete).pack(side="left", padx=4)
+        StyledButton(btn_bar, "Restore", color=PRIMARY, hover=PRIMARY_H,
+                     command=self._restore).pack(side="left", padx=4)
 
         search_row = ctk.CTkFrame(self.inner, fg_color="transparent")
         search_row.pack(fill="x", padx=24, pady=10)
         self.search_var = ctk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh())
-        StyledEntry(search_row, placeholder="🔍  Search by name or ID…",
+        StyledEntry(search_row, placeholder="Search by name or ID...",
                     textvariable=self.search_var, width=320).pack(side="left")
+        
+        # Show deleted checkbox
+        self.show_deleted_var = ctk.BooleanVar(value=False)
+        show_deleted_cb = ctk.CTkCheckBox(search_row, text="Show Deleted", 
+                                          variable=self.show_deleted_var,
+                                          command=self.refresh,
+                                          fg_color=PRIMARY,
+                                          text_color=TEXT)
+        show_deleted_cb.pack(side="left", padx=(10, 0))
 
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        cols = ["ID", "Teacher ID", "Name", "Email", "Phone", "Username", "Created"]
-        widths = [60, 100, 200, 180, 100, 120, 140]
+        cols = ["ID", "Teacher ID", "Name", "Email", "Phone", "Username", "Status", "Created Date", "Deleted"]
+        widths = [60, 100, 200, 180, 100, 120, 80, 100, 80]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
@@ -1416,28 +1503,38 @@ class TeachersPage(ScrollablePage):
 
     def refresh(self):
         q = self.search_var.get().strip()
+        show_deleted = self.show_deleted_var.get()
         try:
             cur = db.cursor(dictionary=True)
             sql = """
-                SELECT t.id, t.teacher_id, t.full_name, t.email, t.phone,
-                       u.username, DATE_FORMAT(t.created,'%%Y-%%m-%%d') AS created
+                SELECT t.id, t.teacher_id, t.full_name, t.email, t.phone, t.status,
+                       u.username, DATE(t.created) AS created,
+                       t.is_deleted, DATE(t.deleted_at) as deleted_at
                 FROM teachers t
                 LEFT JOIN users u ON t.id = u.teacher_id
+                WHERE 1=1
             """
             params = []
+            
+            if not show_deleted:
+                sql += " AND t.is_deleted = FALSE"
+            
             if q:
-                sql += " WHERE t.teacher_id LIKE %s OR t.full_name LIKE %s"
+                sql += " AND (t.teacher_id LIKE %s OR t.full_name LIKE %s)"
                 like = f"%{q}%"
                 params = [like, like]
+            
             sql += " ORDER BY t.created DESC"
             
             cur.execute(sql, tuple(params))
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
+                deleted_status = "Yes" if r["is_deleted"] else "No"
+                created_date = str(r["created"]) if r["created"] else "-"
                 self.tree.insert("", "end", iid=r["id"],
                                  values=(r["id"], r["teacher_id"], r["full_name"],
-                                         r["email"] or "—", r["phone"] or "—",
-                                         r["username"] or "—", r["created"]))
+                                         r["email"] or "-", r["phone"] or "-",
+                                         r["username"] or "-", r["status"], created_date, deleted_status))
         except Exception as e:
             pass
 
@@ -1460,6 +1557,16 @@ class TeachersPage(ScrollablePage):
         except Exception:
             return None
 
+    def _can_delete_teacher(self):
+        """Check if teacher can be deleted (no classes assigned)"""
+        try:
+            cur = db.cursor()
+            cur.execute("SELECT COUNT(*) FROM classes WHERE teacher_id = %s", (self.selected_id,))
+            count = cur.fetchone()[0]
+            return count == 0
+        except:
+            return False
+
     def _add(self):
         TeacherDialog(self, "Add Teacher", on_save=self._do_add)
 
@@ -1471,19 +1578,19 @@ class TeachersPage(ScrollablePage):
         try:
             cur = db.cursor()
             cur.execute("""
-                INSERT INTO teachers (teacher_id, full_name, email, phone, address)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO teachers (teacher_id, full_name, email, phone, address, status, is_deleted)
+                VALUES (%s, %s, %s, %s, %s, %s, FALSE)
             """, (vals["teacher_id"], vals["full_name"], vals["email"],
-                  vals["phone"], vals["address"]))
+                  vals["phone"], vals["address"], vals["status"]))
             teacher_db_id = cur.lastrowid
             
             if vals.get("username"):
                 password = vals.get("password") or "password123"
                 hashed_pw = hash_pw(password)
                 cur.execute("""
-                    INSERT INTO users (username, password, role, full_name, email, teacher_id)
-                    VALUES (%s, %s, 'teacher', %s, %s, %s)
-                """, (vals["username"], hashed_pw, vals["full_name"], vals["email"], teacher_db_id))
+                    INSERT INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
+                    VALUES (%s, %s, 'teacher', %s, %s, %s, %s, FALSE)
+                """, (vals["username"], hashed_pw, vals["full_name"], vals["email"], teacher_db_id, vals["status"]))
             
             db.commit()
             self.refresh()
@@ -1496,17 +1603,18 @@ class TeachersPage(ScrollablePage):
         if not data:
             messagebox.showinfo("Select", "Please select a teacher first.")
             return
+        if data.get("is_deleted"):
+            messagebox.showwarning("Cannot Edit", "Deleted teachers cannot be edited. Restore them first.")
+            return
         
         dialog = ctk.CTkToplevel(self)
         dialog.title("Edit Teacher")
-        dialog.geometry("500x600")
+        dialog.geometry("500x650")
         dialog.resizable(False, False)
         dialog.configure(fg_color=BG_DARK)
         dialog.grab_set()
 
-        ctk.CTkLabel(dialog, text="Edit Teacher",
-                     font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(pady=(20, 10))
+        SectionLabel(dialog, "Edit Teacher").pack(pady=(20, 10))
 
         form = ctk.CTkFrame(dialog, fg_color=CARD, corner_radius=12)
         form.pack(fill="both", expand=True, padx=20, pady=10)
@@ -1532,6 +1640,16 @@ class TeachersPage(ScrollablePage):
             vars_dict[key] = e
             row += 1
 
+        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        status_var = ctk.StringVar(value=data.get("status", "Active"))
+        status_menu = ctk.CTkOptionMenu(form, variable=status_var,
+                                        values=["Active", "Inactive"],
+                                        fg_color=CARD2, button_color=PRIMARY,
+                                        dropdown_fg_color=CARD)
+        status_menu.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+
         ctk.CTkLabel(form, text="Username", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
         username_entry = StyledEntry(form, placeholder="username", width=280)
@@ -1549,22 +1667,22 @@ class TeachersPage(ScrollablePage):
             try:
                 cur = db.cursor()
                 cur.execute("""
-                    UPDATE teachers SET teacher_id=%s, full_name=%s, email=%s, phone=%s, address=%s
+                    UPDATE teachers SET teacher_id=%s, full_name=%s, email=%s, phone=%s, address=%s, status=%s
                     WHERE id=%s
                 """, (new_vals["teacher_id"], new_vals["full_name"], new_vals["email"],
-                      new_vals["phone"], new_vals["address"], self.selected_id))
+                      new_vals["phone"], new_vals["address"], status_var.get(), self.selected_id))
                 
                 new_username = username_entry.get().strip()
                 if new_username:
                     if data.get("username"):
-                        cur.execute("UPDATE users SET username=%s, full_name=%s, email=%s WHERE teacher_id=%s",
-                                    (new_username, new_vals["full_name"], new_vals["email"], self.selected_id))
+                        cur.execute("UPDATE users SET username=%s, full_name=%s, email=%s, status=%s WHERE teacher_id=%s",
+                                    (new_username, new_vals["full_name"], new_vals["email"], status_var.get(), self.selected_id))
                     else:
                         hashed_pw = hash_pw("password123")
                         cur.execute("""
-                            INSERT INTO users (username, password, role, full_name, email, teacher_id)
-                            VALUES (%s, %s, 'teacher', %s, %s, %s)
-                        """, (new_username, hashed_pw, new_vals["full_name"], new_vals["email"], self.selected_id))
+                            INSERT INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
+                            VALUES (%s, %s, 'teacher', %s, %s, %s, %s, FALSE)
+                        """, (new_username, hashed_pw, new_vals["full_name"], new_vals["email"], self.selected_id, status_var.get()))
                 
                 db.commit()
                 self.refresh()
@@ -1577,7 +1695,7 @@ class TeachersPage(ScrollablePage):
         btn_row.pack(fill="x", padx=20, pady=16)
         StyledButton(btn_row, "Cancel", color=CARD2, hover=CARD,
                      command=dialog.destroy).pack(side="left", expand=True, padx=4)
-        StyledButton(btn_row, "💾  Save",
+        StyledButton(btn_row, "Save",
                      command=save_edit).pack(side="left", expand=True, padx=4)
 
     def _delete(self):
@@ -1589,16 +1707,56 @@ class TeachersPage(ScrollablePage):
         if data and data.get("username") == "admin":
             messagebox.showwarning("Cannot Delete", "Cannot delete the default admin account.")
             return
+        if data and data.get("is_deleted"):
+            messagebox.showwarning("Already Deleted", "This teacher is already deleted.")
+            return
+        
+        # Check if teacher has classes assigned
+        if not self._can_delete_teacher():
+            messagebox.showwarning("Cannot Delete", "This teacher is assigned to one or more classes.\n\nYou can set their status to 'Inactive' instead.")
+            return
             
-        if messagebox.askyesno("Confirm Delete", "Delete this teacher and their user account?"):
+        if messagebox.askyesno("Confirm Delete", "Soft delete this teacher? They can be restored later."):
             try:
                 cur = db.cursor()
-                cur.execute("DELETE FROM users WHERE teacher_id=%s", (self.selected_id,))
-                cur.execute("DELETE FROM teachers WHERE id=%s", (self.selected_id,))
+                cur.execute("""
+                    UPDATE teachers SET is_deleted = TRUE, deleted_at = NOW() 
+                    WHERE id = %s
+                """, (self.selected_id,))
+                cur.execute("""
+                    UPDATE users SET is_deleted = TRUE, deleted_at = NOW()
+                    WHERE teacher_id = %s
+                """, (self.selected_id,))
                 db.commit()
                 self.selected_id = None
                 self.refresh()
-                messagebox.showinfo("Success", "Teacher deleted successfully!")
+                messagebox.showinfo("Success", "Teacher soft deleted successfully!")
+            except Error as e:
+                messagebox.showerror("Error", str(e))
+    
+    def _restore(self):
+        if not self.selected_id:
+            messagebox.showinfo("Select", "Please select a teacher first.")
+            return
+        data = self._get_selected_data()
+        if data and not data.get("is_deleted"):
+            messagebox.showwarning("Not Deleted", "This teacher is not deleted.")
+            return
+        if messagebox.askyesno("Confirm Restore", "Restore this teacher?"):
+            try:
+                cur = db.cursor()
+                cur.execute("""
+                    UPDATE teachers SET is_deleted = FALSE, deleted_at = NULL 
+                    WHERE id = %s
+                """, (self.selected_id,))
+                cur.execute("""
+                    UPDATE users SET is_deleted = FALSE, deleted_at = NULL
+                    WHERE teacher_id = %s
+                """, (self.selected_id,))
+                db.commit()
+                self.selected_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Teacher restored successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1613,22 +1771,41 @@ class ClassesPage(ScrollablePage):
     def _build(self):
         top = ctk.CTkFrame(self.inner, fg_color="transparent")
         top.pack(fill="x", padx=24, pady=(24, 0))
-        SectionLabel(top, "🏫  Classes").pack(side="left")
+        SectionLabel(top, "Classes").pack(side="left")
 
         if self.user_data['role'] == 'admin':
             btn_bar = ctk.CTkFrame(top, fg_color="transparent")
             btn_bar.pack(side="right")
-            StyledButton(btn_bar, "➕ Add", command=self._add).pack(side="left", padx=4)
-            StyledButton(btn_bar, "✏️ Edit", color=WARNING, hover="#D97706",
+            StyledButton(btn_bar, "Add", color=SUCCESS, hover="#059669",
+                         command=self._add).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Edit", color=WARNING, hover="#D97706",
                          command=self._edit).pack(side="left", padx=4)
-            StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
+            StyledButton(btn_bar, "Delete", color=DANGER, hover="#DC2626",
                          command=self._delete).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Restore", color=PRIMARY, hover=PRIMARY_H,
+                         command=self._restore).pack(side="left", padx=4)
+
+        search_row = ctk.CTkFrame(self.inner, fg_color="transparent")
+        search_row.pack(fill="x", padx=24, pady=10)
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", lambda *_: self.refresh())
+        StyledEntry(search_row, placeholder="Search by class name...",
+                    textvariable=self.search_var, width=320).pack(side="left")
+        
+        # Show deleted checkbox
+        self.show_deleted_var = ctk.BooleanVar(value=False)
+        show_deleted_cb = ctk.CTkCheckBox(search_row, text="Show Deleted", 
+                                          variable=self.show_deleted_var,
+                                          command=self.refresh,
+                                          fg_color=PRIMARY,
+                                          text_color=TEXT)
+        show_deleted_cb.pack(side="left", padx=(10, 0))
 
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=20)
 
-        cols = ["ID", "Class Name", "Teacher", "Room", "Subjects", "Created"]
-        widths = [60, 200, 180, 100, 200, 140]
+        cols = ["ID", "Class Name", "Teacher", "Room", "Status", "Subjects", "Created Date", "Deleted"]
+        widths = [60, 200, 180, 100, 80, 200, 100, 80]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
@@ -1637,29 +1814,44 @@ class ClassesPage(ScrollablePage):
         self.refresh()
 
     def refresh(self):
+        q = self.search_var.get().strip()
+        show_deleted = self.show_deleted_var.get()
         try:
             cur = db.cursor(dictionary=True)
             sql = """
-                SELECT c.id, c.class_name, t.full_name as teacher, c.room, 
+                SELECT c.id, c.class_name, t.full_name as teacher, c.room, c.status,
                        GROUP_CONCAT(s.subject_name SEPARATOR ', ') as subjects,
-                       DATE_FORMAT(c.created,'%Y-%m-%d') AS created 
+                       DATE(c.created) AS created,
+                       c.is_deleted, DATE(c.deleted_at) as deleted_at
                 FROM classes c
                 LEFT JOIN teachers t ON c.teacher_id = t.id
                 LEFT JOIN class_subjects cs ON c.id = cs.class_id
                 LEFT JOIN subjects s ON cs.subject_id = s.id
+                WHERE 1=1
             """
+            params = []
+            
+            if not show_deleted:
+                sql += " AND c.is_deleted = FALSE"
+            
+            if q:
+                sql += " AND c.class_name LIKE %s"
+                params.append(f"%{q}%")
+            
             if self.user_data['role'] == 'teacher':
-                sql += " WHERE c.teacher_id = %s GROUP BY c.id"
-                cur.execute(sql, (self.user_data['teacher_id'],))
-            else:
-                sql += " GROUP BY c.id ORDER BY c.created DESC"
-                cur.execute(sql)
-                
+                sql += " AND c.teacher_id = %s"
+                params.append(self.user_data['teacher_id'])
+            
+            sql += " GROUP BY c.id ORDER BY c.created DESC"
+            cur.execute(sql, tuple(params))
+            
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
+                deleted_status = "Yes" if r["is_deleted"] else "No"
+                created_date = str(r["created"]) if r["created"] else "-"
                 self.tree.insert("", "end", iid=r["id"],
-                                 values=(r["id"], r["class_name"], r["teacher"] or "—",
-                                         r["room"] or "—", r["subjects"] or "None", r["created"]))
+                                 values=(r["id"], r["class_name"], r["teacher"] or "-",
+                                         r["room"] or "-", r["status"], r["subjects"] or "None", created_date, deleted_status))
         except Exception as e:
             pass
 
@@ -1682,6 +1874,16 @@ class ClassesPage(ScrollablePage):
         except Exception:
             return None
 
+    def _can_delete_class(self):
+        """Check if class can be deleted (no students assigned)"""
+        try:
+            cur = db.cursor()
+            cur.execute("SELECT COUNT(*) FROM students WHERE class_id = %s", (self.selected_id,))
+            count = cur.fetchone()[0]
+            return count == 0
+        except:
+            return False
+
     def _add(self):
         ClassDialog(self, "Add Class", on_save=self._do_add)
 
@@ -1689,12 +1891,11 @@ class ClassesPage(ScrollablePage):
         try:
             cur = db.cursor()
             cur.execute("""
-                INSERT INTO classes (class_name, teacher_id, room)
-                VALUES (%s, %s, %s)
-            """, (vals["class_name"], vals["teacher_id"], vals["room"]))
+                INSERT INTO classes (class_name, teacher_id, room, status, is_deleted)
+                VALUES (%s, %s, %s, %s, FALSE)
+            """, (vals["class_name"], vals["teacher_id"], vals["room"], vals["status"]))
             class_id = cur.lastrowid
             
-            # Insert subjects for this class
             for subject_id in vals["subjects"]:
                 cur.execute("INSERT INTO class_subjects (class_id, subject_id) VALUES (%s, %s)",
                            (class_id, subject_id))
@@ -1710,17 +1911,19 @@ class ClassesPage(ScrollablePage):
         if not data:
             messagebox.showinfo("Select", "Select a class first.")
             return
+        if data.get("is_deleted"):
+            messagebox.showwarning("Cannot Edit", "Deleted classes cannot be edited. Restore them first.")
+            return
         ClassDialog(self, "Edit Class", data=data, on_save=self._do_edit)
 
     def _do_edit(self, vals):
         try:
             cur = db.cursor()
             cur.execute("""
-                UPDATE classes SET class_name=%s, teacher_id=%s, room=%s
+                UPDATE classes SET class_name=%s, teacher_id=%s, room=%s, status=%s
                 WHERE id=%s
-            """, (vals["class_name"], vals["teacher_id"], vals["room"], vals["class_id"]))
+            """, (vals["class_name"], vals["teacher_id"], vals["room"], vals["status"], vals["class_id"]))
             
-            # Update subjects
             cur.execute("DELETE FROM class_subjects WHERE class_id=%s", (vals["class_id"],))
             for subject_id in vals["subjects"]:
                 cur.execute("INSERT INTO class_subjects (class_id, subject_id) VALUES (%s, %s)",
@@ -1736,14 +1939,49 @@ class ClassesPage(ScrollablePage):
         if not self.selected_id:
             messagebox.showinfo("Select", "Select a class first.")
             return
-        if messagebox.askyesno("Confirm", "Delete this class? This will also remove all students in this class."):
+        data = self._get_selected_data()
+        if data and data.get("is_deleted"):
+            messagebox.showwarning("Already Deleted", "This class is already deleted.")
+            return
+        
+        # Check if class has students
+        if not self._can_delete_class():
+            messagebox.showwarning("Cannot Delete", "This class has students assigned.\n\nYou can set its status to 'Inactive' instead.")
+            return
+            
+        if messagebox.askyesno("Confirm", "Soft delete this class? It can be restored later."):
             try:
                 cur = db.cursor()
-                cur.execute("DELETE FROM classes WHERE id=%s", (self.selected_id,))
+                cur.execute("""
+                    UPDATE classes SET is_deleted = TRUE, deleted_at = NOW() 
+                    WHERE id = %s
+                """, (self.selected_id,))
                 db.commit()
                 self.selected_id = None
                 self.refresh()
-                messagebox.showinfo("Success", "Class deleted successfully!")
+                messagebox.showinfo("Success", "Class soft deleted successfully!")
+            except Error as e:
+                messagebox.showerror("Error", str(e))
+    
+    def _restore(self):
+        if not self.selected_id:
+            messagebox.showinfo("Select", "Select a class first.")
+            return
+        data = self._get_selected_data()
+        if data and not data.get("is_deleted"):
+            messagebox.showwarning("Not Deleted", "This class is not deleted.")
+            return
+        if messagebox.askyesno("Confirm Restore", "Restore this class?"):
+            try:
+                cur = db.cursor()
+                cur.execute("""
+                    UPDATE classes SET is_deleted = FALSE, deleted_at = NULL 
+                    WHERE id = %s
+                """, (self.selected_id,))
+                db.commit()
+                self.selected_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Class restored successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1758,38 +1996,41 @@ class SubjectsPage(ScrollablePage):
     def _build(self):
         top = ctk.CTkFrame(self.inner, fg_color="transparent")
         top.pack(fill="x", padx=24, pady=(24, 0))
-        SectionLabel(top, "📚  Subjects").pack(side="left")
+        SectionLabel(top, "Subjects").pack(side="left")
 
         if self.user_data['role'] == 'admin':
             btn_bar = ctk.CTkFrame(top, fg_color="transparent")
             btn_bar.pack(side="right")
-            StyledButton(btn_bar, "➕ Add", command=self._add).pack(side="left", padx=4)
-            StyledButton(btn_bar, "✏️ Edit", color=WARNING, hover="#D97706",
+            StyledButton(btn_bar, "Add", color=SUCCESS, hover="#059669",
+                         command=self._add).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Edit", color=WARNING, hover="#D97706",
                          command=self._edit).pack(side="left", padx=4)
-            StyledButton(btn_bar, "🗑 Delete", color=DANGER, hover="#DC2626",
+            StyledButton(btn_bar, "Delete", color=DANGER, hover="#DC2626",
                          command=self._delete).pack(side="left", padx=4)
+            StyledButton(btn_bar, "Restore", color=PRIMARY, hover=PRIMARY_H,
+                         command=self._restore).pack(side="left", padx=4)
 
-        form = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
-        form.pack(fill="x", padx=24, pady=16)
-        form.columnconfigure((1, 3, 5), weight=1)
-
-        readonly = self.user_data['role'] != 'admin'
+        search_row = ctk.CTkFrame(self.inner, fg_color="transparent")
+        search_row.pack(fill="x", padx=24, pady=10)
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", lambda *_: self.refresh())
+        StyledEntry(search_row, placeholder="Search by subject name or code...",
+                    textvariable=self.search_var, width=320).pack(side="left")
         
-        for col, (lbl, attr, ph) in enumerate([
-            ("Subject Name", "name_e",    "Mathematics"),
-            ("Code",         "code_e",    "MATH101"),
-            ("Credits",      "credits_e", "3"),
-        ]):
-            ctk.CTkLabel(form, text=lbl, text_color=SUBTEXT).grid(row=0, column=col*2, padx=12, pady=12, sticky="w")
-            e = StyledEntry(form, placeholder=ph, state="readonly" if readonly else "normal")
-            e.grid(row=0, column=col*2+1, padx=8, pady=12, sticky="ew")
-            setattr(self, attr, e)
+        # Show deleted checkbox
+        self.show_deleted_var = ctk.BooleanVar(value=False)
+        show_deleted_cb = ctk.CTkCheckBox(search_row, text="Show Deleted", 
+                                          variable=self.show_deleted_var,
+                                          command=self.refresh,
+                                          fg_color=PRIMARY,
+                                          text_color=TEXT)
+        show_deleted_cb.pack(side="left", padx=(10, 0))
 
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        cols  = ["ID", "Subject Name", "Code", "Credits", "Created"]
-        widths = [60, 240, 120, 80, 160]
+        cols  = ["ID", "Subject Name", "Code", "Credits", "Status", "Created Date", "Deleted"]
+        widths = [60, 200, 120, 80, 80, 100, 80]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
@@ -1798,14 +2039,37 @@ class SubjectsPage(ScrollablePage):
         self.refresh()
 
     def refresh(self):
+        q = self.search_var.get().strip()
+        show_deleted = self.show_deleted_var.get()
         try:
             cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id,subject_name,subject_code,credits,DATE_FORMAT(created,'%Y-%m-%d') AS created FROM subjects ORDER BY subject_name")
+            sql = """
+                SELECT id, subject_name, subject_code, credits, status,
+                       DATE(created) AS created,
+                       is_deleted, DATE(deleted_at) as deleted_at
+                FROM subjects
+                WHERE 1=1
+            """
+            params = []
+            
+            if not show_deleted:
+                sql += " AND is_deleted = FALSE"
+            
+            if q:
+                sql += " AND (subject_name LIKE %s OR subject_code LIKE %s)"
+                like = f"%{q}%"
+                params = [like, like]
+            
+            sql += " ORDER BY subject_name"
+            cur.execute(sql, tuple(params))
+            
             self.tree.delete(*self.tree.get_children())
             for r in cur.fetchall():
+                deleted_status = "Yes" if r["is_deleted"] else "No"
+                created_date = str(r["created"]) if r["created"] else "-"
                 self.tree.insert("", "end", iid=r["id"],
                                  values=(r["id"], r["subject_name"], r["subject_code"],
-                                         r["credits"], r["created"]))
+                                         r["credits"], r["status"], created_date, deleted_status))
         except Exception:
             pass
 
@@ -1813,21 +2077,42 @@ class SubjectsPage(ScrollablePage):
         sel = self.tree.selection()
         if sel:
             self.selected_id = int(sel[0])
-            vals = self.tree.item(self.selected_id)["values"]
-            for e, v in zip([self.name_e, self.code_e, self.credits_e], [vals[1], vals[2], vals[3]]):
-                e.delete(0, "end"); e.insert(0, str(v))
+
+    def _get_selected_data(self):
+        if not self.selected_id:
+            return None
+        try:
+            cur = db.cursor(dictionary=True)
+            cur.execute("SELECT * FROM subjects WHERE id = %s", (self.selected_id,))
+            return cur.fetchone()
+        except Exception:
+            return None
+
+    def _can_delete_subject(self):
+        """Check if subject can be deleted (no scores and not used in classes)"""
+        try:
+            cur = db.cursor()
+            # Check if subject has scores
+            cur.execute("SELECT COUNT(*) FROM scores WHERE subject_id = %s", (self.selected_id,))
+            scores_count = cur.fetchone()[0]
+            # Check if subject is used in any class
+            cur.execute("SELECT COUNT(*) FROM class_subjects WHERE subject_id = %s", (self.selected_id,))
+            class_count = cur.fetchone()[0]
+            return scores_count == 0 and class_count == 0
+        except:
+            return False
 
     def _add(self):
-        name = self.name_e.get().strip()
-        code = self.code_e.get().strip()
-        if not name or not code:
-            messagebox.showwarning("Validation", "Name and Code are required.")
-            return
+        SubjectDialog(self, "Add Subject", on_save=self._do_add)
+
+    def _do_add(self, vals):
         try:
-            credits = int(self.credits_e.get() or 3)
             cur = db.cursor()
-            cur.execute("INSERT INTO subjects (subject_name,subject_code,credits) VALUES (%s,%s,%s)",
-                        (name, code, credits))
+            cur.execute("""
+                INSERT INTO subjects (subject_name, subject_code, credits, teacher_id, status, is_deleted)
+                VALUES (%s, %s, %s, %s, %s, FALSE)
+            """, (vals["subject_name"], vals["subject_code"], vals["credits"], 
+                  vals["teacher_id"], vals["status"]))
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Subject added successfully!")
@@ -1835,19 +2120,24 @@ class SubjectsPage(ScrollablePage):
             messagebox.showerror("Error", str(e))
 
     def _edit(self):
-        if not self.selected_id:
+        data = self._get_selected_data()
+        if not data:
             messagebox.showinfo("Select", "Select a subject first.")
             return
-        name = self.name_e.get().strip()
-        code = self.code_e.get().strip()
-        if not name or not code:
-            messagebox.showwarning("Validation", "Name and Code are required.")
+        if data.get("is_deleted"):
+            messagebox.showwarning("Cannot Edit", "Deleted subjects cannot be edited. Restore them first.")
             return
+        SubjectDialog(self, "Edit Subject", data=data, on_save=self._do_edit)
+
+    def _do_edit(self, vals):
         try:
-            credits = int(self.credits_e.get() or 3)
             cur = db.cursor()
-            cur.execute("UPDATE subjects SET subject_name=%s,subject_code=%s,credits=%s WHERE id=%s",
-                        (name, code, credits, self.selected_id))
+            cur.execute("""
+                UPDATE subjects SET subject_name=%s, subject_code=%s, credits=%s, 
+                                   teacher_id=%s, status=%s
+                WHERE id=%s
+            """, (vals["subject_name"], vals["subject_code"], vals["credits"],
+                  vals["teacher_id"], vals["status"], vals["subject_id"]))
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Subject updated successfully!")
@@ -1858,14 +2148,49 @@ class SubjectsPage(ScrollablePage):
         if not self.selected_id:
             messagebox.showinfo("Select", "Select a subject first.")
             return
-        if messagebox.askyesno("Confirm", "Delete this subject?"):
+        data = self._get_selected_data()
+        if data and data.get("is_deleted"):
+            messagebox.showwarning("Already Deleted", "This subject is already deleted.")
+            return
+        
+        # Check if subject can be deleted
+        if not self._can_delete_subject():
+            messagebox.showwarning("Cannot Delete", "This subject has scores or is assigned to classes.\n\nYou can set its status to 'Inactive' instead.")
+            return
+            
+        if messagebox.askyesno("Confirm", "Soft delete this subject?"):
             try:
                 cur = db.cursor()
-                cur.execute("DELETE FROM subjects WHERE id=%s", (self.selected_id,))
+                cur.execute("""
+                    UPDATE subjects SET is_deleted = TRUE, deleted_at = NOW() 
+                    WHERE id = %s
+                """, (self.selected_id,))
                 db.commit()
                 self.selected_id = None
                 self.refresh()
-                messagebox.showinfo("Success", "Subject deleted successfully!")
+                messagebox.showinfo("Success", "Subject soft deleted successfully!")
+            except Error as e:
+                messagebox.showerror("Error", str(e))
+    
+    def _restore(self):
+        if not self.selected_id:
+            messagebox.showinfo("Select", "Select a subject first.")
+            return
+        data = self._get_selected_data()
+        if data and not data.get("is_deleted"):
+            messagebox.showwarning("Not Deleted", "This subject is not deleted.")
+            return
+        if messagebox.askyesno("Confirm Restore", "Restore this subject?"):
+            try:
+                cur = db.cursor()
+                cur.execute("""
+                    UPDATE subjects SET is_deleted = FALSE, deleted_at = NULL 
+                    WHERE id = %s
+                """, (self.selected_id,))
+                db.commit()
+                self.selected_id = None
+                self.refresh()
+                messagebox.showinfo("Success", "Subject restored successfully!")
             except Error as e:
                 messagebox.showerror("Error", str(e))
 
@@ -1877,13 +2202,14 @@ class ReportsPage(ScrollablePage):
         self._build()
 
     def _build(self):
-        SectionLabel(self.inner, "📈  Performance Report").pack(anchor="w", padx=24, pady=(24, 16))
+        SectionLabel(self.inner, "Performance Report").pack(anchor="w", padx=24, pady=(24, 16))
 
         filter_row = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=12)
         filter_row.pack(fill="x", padx=24, pady=(0, 12))
         
         if self.user_data['role'] != 'student':
-            ctk.CTkLabel(filter_row, text="Filter by Class:", text_color=SUBTEXT).pack(side="left", padx=16, pady=10)
+            ctk.CTkLabel(filter_row, text="Filter by Class:",
+                         text_color=SUBTEXT).pack(side="left", padx=16, pady=10)
             self.class_var = ctk.StringVar(value="All Classes")
             self.class_menu = ctk.CTkOptionMenu(filter_row, variable=self.class_var,
                                                 values=["All Classes"],
@@ -1892,12 +2218,12 @@ class ReportsPage(ScrollablePage):
                                                 command=lambda _: self.refresh())
             self.class_menu.pack(side="left", padx=8, pady=10)
         
-        StyledButton(filter_row, "🔄 Refresh", command=self.refresh).pack(side="right", padx=16, pady=10)
+        StyledButton(filter_row, "Refresh", command=self.refresh).pack(side="right", padx=16, pady=10)
 
         if self.user_data['role'] != 'student':
-            StyledButton(filter_row, "📝 Edit Scores", color=SUCCESS, hover="#059669",
+            StyledButton(filter_row, "Edit Scores", color=SUCCESS, hover="#059669",
                          command=self._edit_scores).pack(side="right", padx=8, pady=10)
-            StyledButton(filter_row, "📊 Export", color=WARNING, hover="#D97706",
+            StyledButton(filter_row, "Export", color=WARNING, hover="#D97706",
                          command=self._export).pack(side="right", padx=8, pady=10)
 
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
@@ -1914,7 +2240,6 @@ class ReportsPage(ScrollablePage):
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
         sb.pack(side="right", fill="y", pady=16, padx=(0, 8))
         
-        # Bind double-click to edit scores
         if self.user_data['role'] != 'student':
             self.tree.bind("<Double-Button-1>", self._on_double_click)
 
@@ -1929,13 +2254,13 @@ class ReportsPage(ScrollablePage):
                 cur.execute("""
                     SELECT c.class_name FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
-                    WHERE t.id = %s
+                    WHERE t.id = %s AND c.is_deleted = FALSE AND c.status = 'Active'
                 """, (self.user_data['teacher_id'],))
                 names = [r["class_name"] for r in cur.fetchall()]
                 self.class_menu.configure(values=names if names else ["No Class"])
                 self.class_var.set(names[0] if names else "No Class")
             else:
-                cur.execute("SELECT class_name FROM classes ORDER BY class_name")
+                cur.execute("SELECT class_name FROM classes WHERE is_deleted = FALSE AND status = 'Active' ORDER BY class_name")
                 names = ["All Classes"] + [r["class_name"] for r in cur.fetchall()]
                 self.class_menu.configure(values=names)
         except Exception:
@@ -1949,7 +2274,7 @@ class ReportsPage(ScrollablePage):
                     SELECT sub.subject_name, sc.midterm, sc.final, sc.total, sc.grade
                     FROM scores sc
                     JOIN subjects sub ON sc.subject_id = sub.id
-                    WHERE sc.student_id = (SELECT id FROM students WHERE student_id=%s)
+                    WHERE sc.student_id = (SELECT id FROM students WHERE student_id=%s AND is_deleted = FALSE)
                     ORDER BY sub.subject_name
                 """, (self.user_data['student_id'],))
                 
@@ -1973,7 +2298,7 @@ class ReportsPage(ScrollablePage):
                     FROM students s
                     LEFT JOIN classes c ON s.class_id = c.id
                     LEFT JOIN scores sc ON sc.student_id = s.id
-                    WHERE c.teacher_id = %s
+                    WHERE c.teacher_id = %s AND s.is_deleted = FALSE AND s.status = 'Active'
                 """
                 params = (self.user_data['teacher_id'],)
                 if cls != "All Classes" and cls != "No Class":
@@ -1989,10 +2314,11 @@ class ReportsPage(ScrollablePage):
                     FROM students s
                     LEFT JOIN classes c ON s.class_id = c.id
                     LEFT JOIN scores sc ON sc.student_id = s.id
+                    WHERE s.is_deleted = FALSE AND s.status = 'Active'
                 """
                 params = ()
                 if cls != "All Classes":
-                    sql += " WHERE c.class_name = %s"
+                    sql += " AND c.class_name = %s"
                     params = (cls,)
                 sql += " GROUP BY s.id ORDER BY avg_score DESC"
                 cur.execute(sql, params)
@@ -2005,17 +2331,16 @@ class ReportsPage(ScrollablePage):
                          "B+" if avg >= 75 else "B" if avg >= 70 else
                          "C+" if avg >= 65 else "C" if avg >= 60 else
                          "D" if avg >= 50 else "F")
-                result = "✅ Pass" if avg >= 50 else "❌ Fail"
+                result = "Pass" if avg >= 50 else "Fail"
                 self.tree.insert("", "end", iid=r["id"],
                                  values=(r["student_id"], r["full_name"],
-                                         r["class_name"] or "—", r["subj_count"] or 0,
+                                         r["class_name"] or "-", r["subj_count"] or 0,
                                          avg, grade, result))
                 self.students_data[r["id"]] = r["student_id"]
         except Exception as e:
             pass
 
     def _on_double_click(self, event):
-        """Handle double-click on a student to edit scores"""
         selection = self.tree.selection()
         if selection:
             student_db_id = int(selection[0])
@@ -2023,7 +2348,6 @@ class ReportsPage(ScrollablePage):
             ScoreDialog(self, student_db_id, student_name, on_save=self._do_scores)
 
     def _edit_scores(self):
-        """Edit scores for selected student"""
         selection = self.tree.selection()
         if not selection:
             messagebox.showinfo("Select", "Please select a student first.")
@@ -2048,7 +2372,6 @@ class ReportsPage(ScrollablePage):
             messagebox.showerror("Error", str(e))
 
     def _export(self):
-        from tkinter import filedialog
         filename = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
@@ -2056,7 +2379,7 @@ class ReportsPage(ScrollablePage):
         )
         if filename:
             try:
-                with open(filename, 'w') as f:
+                with open(filename, 'w', encoding='utf-8') as f:
                     f.write("Student Performance Report\n")
                     f.write("=" * 60 + "\n\n")
                     items = self.tree.get_children()
@@ -2071,7 +2394,7 @@ class ReportsPage(ScrollablePage):
                 messagebox.showerror("Error", str(e))
 
 
-#  MAIN APPLICATION
+# ========== MAIN APPLICATION ==========
 class MainApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -2100,7 +2423,6 @@ class MainApp(ctk.CTk):
         center_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         center_frame.pack(expand=True)
         
-        ctk.CTkLabel(center_frame, text="🎓", font=ctk.CTkFont(size=48)).pack(pady=(0, 10))
         ctk.CTkLabel(center_frame, text="Student Management System",
                      font=ctk.CTkFont(size=24, weight="bold"),
                      text_color=PRIMARY).pack(pady=(0, 5))
@@ -2118,7 +2440,7 @@ class MainApp(ctk.CTk):
         
         ctk.CTkLabel(form_frame, text="Password",
                      text_color=SUBTEXT, anchor="w").pack(padx=20, pady=(0, 5))
-        self.password_entry = StyledEntry(form_frame, placeholder="Enter password", show="•")
+        self.password_entry = StyledEntry(form_frame, placeholder="Enter password", show="*")
         self.password_entry.pack(padx=20, pady=(0, 20), fill="x")
         
         StyledButton(form_frame, "Login", color=PRIMARY, hover=PRIMARY_H,
@@ -2132,10 +2454,10 @@ class MainApp(ctk.CTk):
                      text_color=TEXT).pack(pady=(10, 5))
         
         creds = [
-            ("👑 Admin", "admin / admin123"),
-            ("👨‍🏫 Teacher", "teacher / teacher123"),
-            ("👨‍🎓 Student 1", "student / student123"),
-            ("👩‍🎓 Student 2", "student2 / student123"),
+            ("Admin", "admin / admin123"),
+            ("Teacher", "teacher / teacher123"),
+            ("Student 1", "student / student123"),
+            ("Student 2", "student2 / student123"),
         ]
         
         for role, cred in creds:
@@ -2156,12 +2478,18 @@ class MainApp(ctk.CTk):
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
-                SELECT id, username, role, full_name, student_id, teacher_id, email
+                SELECT id, username, role, full_name, student_id, teacher_id, email, status, is_deleted
                 FROM users WHERE username=%s AND password=%s
             """, (username, hash_pw(password)))
             user = cur.fetchone()
             
             if user:
+                if user.get("is_deleted"):
+                    messagebox.showerror("Login Failed", "Your account has been deactivated. Please contact an administrator.")
+                    return
+                if user.get("status") == "Inactive":
+                    messagebox.showerror("Login Failed", "Your account is inactive. Please contact an administrator.")
+                    return
                 self.user_data = user
                 self._build_main_app()
             else:
@@ -2211,54 +2539,62 @@ class MainApp(ctk.CTk):
         logo_frame = ctk.CTkFrame(sidebar, fg_color=PRIMARY, height=64, corner_radius=0)
         logo_frame.pack(fill="x")
         logo_frame.pack_propagate(False)
-        ctk.CTkLabel(logo_frame, text="🎓  SMS",
+        
+        ctk.CTkLabel(logo_frame, text="SMS",
                      font=ctk.CTkFont(size=20, weight="bold"),
                      text_color=TEXT).pack(expand=True)
 
         if self.user_data['role'] == 'admin':
             nav_items = [
-                ("Dashboard", "📊", self._show_dashboard),
-                ("Students",  "👨‍🎓", self._show_students),
-                ("Teachers",  "👨‍🏫", self._show_teachers),
-                ("Classes",   "🏫", self._show_classes),
-                ("Subjects",  "📚", self._show_subjects),
-                ("Reports",   "📈", self._show_reports),
+                ("Dashboard", self._show_dashboard),
+                ("Students", self._show_students),
+                ("Teachers", self._show_teachers),
+                ("Classes", self._show_classes),
+                ("Subjects", self._show_subjects),
+                ("Reports", self._show_reports),
             ]
         elif self.user_data['role'] == 'teacher':
             nav_items = [
-                ("Dashboard", "📊", self._show_dashboard),
-                ("Students",  "👨‍🎓", self._show_students),
-                ("Classes",   "🏫", self._show_classes),
-                ("Reports",   "📈", self._show_reports),
+                ("Dashboard", self._show_dashboard),
+                ("Students", self._show_students),
+                ("Classes", self._show_classes),
+                ("Reports", self._show_reports),
             ]
         else:
             nav_items = [
-                ("Dashboard", "📊", self._show_dashboard),
-                ("Reports",   "📈", self._show_reports),
+                ("Dashboard", self._show_dashboard),
+                ("Reports", self._show_reports),
             ]
 
         nav_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
         nav_frame.pack(fill="x", padx=8, pady=16)
 
         self.nav_buttons = {}
-        for name, icon, cmd in nav_items:
-            btn = SidebarButton(nav_frame, name, icon, command=cmd)
+        for name, cmd in nav_items:
+            btn = ctk.CTkButton(nav_frame, text=name,
+                               fg_color="transparent",
+                               hover_color=CARD2,
+                               text_color=SUBTEXT,
+                               anchor="w",
+                               height=44,
+                               corner_radius=8,
+                               font=ctk.CTkFont(size=13),
+                               command=cmd)
             btn.pack(fill="x", pady=2)
             self.nav_buttons[name] = btn
 
         user_frame = ctk.CTkFrame(sidebar, fg_color=CARD2, corner_radius=10)
         user_frame.pack(side="bottom", fill="x", padx=8, pady=12)
         
-        role_icon = "👑" if self.user_data['role'] == 'admin' else "👨‍🏫" if self.user_data['role'] == 'teacher' else "👨‍🎓"
-        ctk.CTkLabel(user_frame, text=f"{role_icon}  {self.user_data['username']}",
+        ctk.CTkLabel(user_frame, text=self.user_data['username'],
                      text_color=TEXT, font=ctk.CTkFont(weight="bold")).pack(pady=(10, 2))
         ctk.CTkLabel(user_frame, text=f"Role: {self.user_data['role'].title()}",
                      text_color=SUBTEXT, font=ctk.CTkFont(size=11)).pack(pady=(0, 5))
         
-        StyledButton(user_frame, "👤  Profile", color=PRIMARY, hover=PRIMARY_H,
+        StyledButton(user_frame, "Profile", color=PRIMARY, hover=PRIMARY_H,
                      command=self._show_profile).pack(pady=(4, 4), padx=12, fill="x")
         
-        StyledButton(user_frame, "🚪  Logout", color=DANGER, hover="#DC2626",
+        StyledButton(user_frame, "Logout", color=DANGER, hover="#DC2626",
                      command=self._logout).pack(pady=(4, 10), padx=12, fill="x")
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
@@ -2269,23 +2605,23 @@ class MainApp(ctk.CTk):
         if self.user_data['role'] == 'admin':
             self.pages = {
                 "Dashboard": DashboardPage(self.content, self.user_data),
-                "Students":  StudentsPage(self.content, self.user_data),
-                "Teachers":  TeachersPage(self.content, self.user_data),
-                "Classes":   ClassesPage(self.content, self.user_data),
-                "Subjects":  SubjectsPage(self.content, self.user_data),
-                "Reports":   ReportsPage(self.content, self.user_data),
+                "Students": StudentsPage(self.content, self.user_data),
+                "Teachers": TeachersPage(self.content, self.user_data),
+                "Classes": ClassesPage(self.content, self.user_data),
+                "Subjects": SubjectsPage(self.content, self.user_data),
+                "Reports": ReportsPage(self.content, self.user_data),
             }
         elif self.user_data['role'] == 'teacher':
             self.pages = {
                 "Dashboard": DashboardPage(self.content, self.user_data),
-                "Students":  StudentsPage(self.content, self.user_data),
-                "Classes":   ClassesPage(self.content, self.user_data),
-                "Reports":   ReportsPage(self.content, self.user_data),
+                "Students": StudentsPage(self.content, self.user_data),
+                "Classes": ClassesPage(self.content, self.user_data),
+                "Reports": ReportsPage(self.content, self.user_data),
             }
         else:
             self.pages = {
                 "Dashboard": DashboardPage(self.content, self.user_data),
-                "Reports":   ReportsPage(self.content, self.user_data),
+                "Reports": ReportsPage(self.content, self.user_data),
             }
 
         self._show_dashboard()
@@ -2297,7 +2633,10 @@ class MainApp(ctk.CTk):
         for p in self.pages.values():
             p.pack_forget()
         for n, b in self.nav_buttons.items():
-            b.set_active(n == name)
+            if n == name:
+                b.configure(fg_color=PRIMARY, text_color=TEXT)
+            else:
+                b.configure(fg_color="transparent", text_color=SUBTEXT)
         page = self.pages[name]
         if hasattr(page, "refresh"):
             page.refresh()
@@ -2307,11 +2646,11 @@ class MainApp(ctk.CTk):
         self.current_page_name = name
 
     def _show_dashboard(self): self._show_page("Dashboard")
-    def _show_students(self):  self._show_page("Students")
-    def _show_teachers(self):  self._show_page("Teachers")
-    def _show_classes(self):   self._show_page("Classes")
-    def _show_subjects(self):  self._show_page("Subjects")
-    def _show_reports(self):   self._show_page("Reports")
+    def _show_students(self): self._show_page("Students")
+    def _show_teachers(self): self._show_page("Teachers")
+    def _show_classes(self): self._show_page("Classes")
+    def _show_subjects(self): self._show_page("Subjects")
+    def _show_reports(self): self._show_page("Reports")
 
     def _logout(self):
         self.user_data = None
@@ -2325,14 +2664,18 @@ class MainApp(ctk.CTk):
 
 
 if __name__ == "__main__":
-    ok, msg = db.connect("localhost", "root", "root")
+    # Change these to match your MySQL configuration
+    DB_HOST = "localhost"
+    DB_USER = "root"
+    DB_PASSWORD = "root"  # Change this to your MySQL password
+    
+    ok, msg = db.connect(DB_HOST, DB_USER, DB_PASSWORD)
     if not ok:
-        import tkinter as tk
-        root = tk.Tk()
+        root = ctk.CTk()
         root.withdraw()
         messagebox.showerror(
             "Database Error",
-            f"Cannot connect to MySQL with root/root:\n\n{msg}\n\n"
+            f"Cannot connect to MySQL with {DB_USER}/{DB_PASSWORD}:\n\n{msg}\n\n"
             "Please check that MySQL is running and your credentials are correct."
         )
         root.destroy()
@@ -2340,8 +2683,7 @@ if __name__ == "__main__":
         try:
             db.setup_database()
         except Exception as e:
-            import tkinter as tk
-            root = tk.Tk()
+            root = ctk.CTk()
             root.withdraw()
             messagebox.showerror("Setup Error", str(e))
             root.destroy()
