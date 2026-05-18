@@ -56,25 +56,24 @@ class Database:
         cur.execute("CREATE DATABASE IF NOT EXISTS student_management_db")
         cur.execute("USE student_management_db")
 
-        # Users table with soft delete
+        # Users table with soft delete (no status field)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
                 username   VARCHAR(50)  NOT NULL UNIQUE,
                 password   VARCHAR(255) NOT NULL,
                 role       ENUM('admin','teacher','student') DEFAULT 'student',
-                full_name  VARCHAR(100),
+                full_name  VARCHAR(100) NOT NULL,
                 email      VARCHAR(100),
                 student_id VARCHAR(20),
                 teacher_id INT,
-                status     ENUM('Active','Inactive') DEFAULT 'Active',
                 is_deleted BOOLEAN DEFAULT FALSE,
                 deleted_at DATETIME,
                 created    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Teachers table with soft delete and status
+        # Teachers table with status and soft delete
         cur.execute("""
             CREATE TABLE IF NOT EXISTS teachers (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -90,13 +89,13 @@ class Database:
             )
         """)
 
-        # Classes table with soft delete and status
+        # Classes table with status and soft delete
         cur.execute("""
             CREATE TABLE IF NOT EXISTS classes (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
                 class_name VARCHAR(50)  NOT NULL UNIQUE,
                 teacher_id INT,
-                room       VARCHAR(20),
+                room       VARCHAR(20) NOT NULL,
                 status     ENUM('Active','Inactive') DEFAULT 'Active',
                 is_deleted BOOLEAN DEFAULT FALSE,
                 deleted_at DATETIME,
@@ -105,19 +104,17 @@ class Database:
             )
         """)
 
-        # Subjects table with soft delete and status
+        # Subjects table with status and soft delete (no teacher_id)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS subjects (
                 id           INT AUTO_INCREMENT PRIMARY KEY,
                 subject_name VARCHAR(100) NOT NULL,
                 subject_code VARCHAR(20)  NOT NULL UNIQUE,
-                credits      INT DEFAULT 3,
-                teacher_id   INT,
+                credits      INT NOT NULL DEFAULT 3,
                 status       ENUM('Active','Inactive') DEFAULT 'Active',
                 is_deleted   BOOLEAN DEFAULT FALSE,
                 deleted_at   DATETIME,
-                created      DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+                created      DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -132,7 +129,7 @@ class Database:
             )
         """)
 
-        # Students table with soft delete and status
+        # Students table with status and soft delete
         cur.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -189,8 +186,8 @@ class Database:
         # Seed admin user
         admin_pw = hashlib.sha256("admin123".encode()).hexdigest()
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, status, is_deleted)
-            VALUES ('admin', %s, 'admin', 'System Administrator', 'admin@school.edu', 'Active', FALSE)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, is_deleted)
+            VALUES ('admin', %s, 'admin', 'System Administrator', 'admin@school.edu', FALSE)
         """, (admin_pw,))
 
         # Seed teacher
@@ -200,8 +197,8 @@ class Database:
             VALUES ('TCH001', 'Prof. John Smith', 'john.smith@school.edu', '555-0101', 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
-            VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1, 'Active', FALSE)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, teacher_id, is_deleted)
+            VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1, FALSE)
         """, (teacher_pw,))
 
         # Seed class
@@ -212,34 +209,34 @@ class Database:
 
         # Seed subjects
         cur.execute("""
-            INSERT IGNORE INTO subjects (subject_name, subject_code, credits, teacher_id, status, is_deleted)
+            INSERT IGNORE INTO subjects (subject_name, subject_code, credits, status, is_deleted)
             VALUES 
-                ('Mathematics', 'MATH101', 4, 1, 'Active', FALSE),
-                ('Physics', 'PHY101', 4, 1, 'Active', FALSE),
-                ('English', 'ENG101', 3, 1, 'Active', FALSE)
+                ('Mathematics', 'MATH101', 4, 'Active', FALSE),
+                ('Physics', 'PHY101', 4, 'Active', FALSE),
+                ('English', 'ENG101', 3, 'Active', FALSE)
         """)
         
         cur.execute("INSERT IGNORE INTO class_subjects (class_id, subject_id) VALUES (1,1), (1,2), (1,3)")
 
-        # Seed student
+        # Seed student 1
         student_pw = hashlib.sha256("student123".encode()).hexdigest()
         cur.execute("""
             INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
             VALUES ('STU001', 'Alice Johnson', 'Female', 'alice@student.edu', '555-0201', 1, 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, status, is_deleted)
-            VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001', 'Active', FALSE)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, is_deleted)
+            VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001', FALSE)
         """, (student_pw,))
 
-        # Seed another student
+        # Seed student 2
         cur.execute("""
             INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
             VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', '555-0202', 1, 'Active', FALSE)
         """)
         cur.execute("""
-            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, status, is_deleted)
-            VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002', 'Active', FALSE)
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, is_deleted)
+            VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002', FALSE)
         """, (student_pw,))
 
 
@@ -355,7 +352,7 @@ def styled_table(parent, columns, col_widths=None):
     return tree, sb
 
 
-#  DIALOGS
+# DIALOGS
 class ProfileDialog(ctk.CTkToplevel):
     def __init__(self, master, user_data, on_update=None):
         super().__init__(master)
@@ -440,14 +437,16 @@ class ProfileDialog(ctk.CTkToplevel):
 
 
 class StudentDialog(ctk.CTkToplevel):
-    def __init__(self, master, title="Student", data=None, on_save=None, teacher_mode=False):
+    def __init__(self, master, title="Student", data=None, on_save=None, teacher_mode=False, is_admin=False):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x700")
+        self.geometry("500x800")  # Increased height for username field
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
         self.teacher_mode = teacher_mode
+        self.is_admin = is_admin
+        self.is_edit = data is not None
         self.grab_set()
 
         SectionLabel(self, title).pack(pady=(20, 10))
@@ -475,6 +474,15 @@ class StudentDialog(ctk.CTkToplevel):
                 e.insert(0, str(data[key]))
             self.vars[key] = e
             row += 1
+
+        # Username field (required for login)
+        ctk.CTkLabel(form, text="Username (required for login)", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        self.username_entry = StyledEntry(form, placeholder="Enter username", width=280)
+        self.username_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        if data and data.get("username"):
+            self.username_entry.insert(0, str(data["username"]))
+        row += 1
 
         ctk.CTkLabel(form, text="Gender", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
@@ -507,6 +515,7 @@ class StudentDialog(ctk.CTkToplevel):
         self.class_menu.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
 
+        # Status field
         ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
         self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
@@ -514,6 +523,34 @@ class StudentDialog(ctk.CTkToplevel):
                           values=["Active", "Inactive"],
                           fg_color=CARD2, button_color=PRIMARY,
                           dropdown_fg_color=CARD).grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+
+        # Password field (required for new students)
+        if not self.is_edit:
+            ctk.CTkLabel(form, text="Password (required)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.password_entry = StyledEntry(form, placeholder="Enter password", show="*", width=280)
+            self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+            
+            ctk.CTkLabel(form, text="Confirm Password (required)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.confirm_password_entry = StyledEntry(form, placeholder="Confirm password", show="*", width=280)
+            self.confirm_password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+        elif self.is_admin:
+            # In edit mode, admin can optionally change password
+            ctk.CTkLabel(form, text="New Password (optional)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="*", width=280)
+            self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+            
+            ctk.CTkLabel(form, text="Confirm Password", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.confirm_password_entry = StyledEntry(form, placeholder="Confirm new password", show="*", width=280)
+            self.confirm_password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x", padx=20, pady=16)
@@ -532,26 +569,68 @@ class StudentDialog(ctk.CTkToplevel):
 
     def _save(self):
         vals = {k: e.get().strip() for k, e in self.vars.items()}
+        
+        # Validation
         if not vals["student_id"] or not vals["full_name"]:
             messagebox.showwarning("Validation", "Student ID and Full Name are required.", parent=self)
             return
+        
+        # Username validation
+        username = self.username_entry.get().strip()
+        if not username:
+            messagebox.showwarning("Validation", "Username is required for student accounts.", parent=self)
+            return
+        
+        vals["username"] = username
+        
+        # Password validation for new student
+        if not self.is_edit:
+            password = self.password_entry.get() if hasattr(self, 'password_entry') else ""
+            confirm = self.confirm_password_entry.get() if hasattr(self, 'confirm_password_entry') else ""
+            
+            if not password:
+                messagebox.showwarning("Validation", "Password is required for new student accounts.", parent=self)
+                return
+            if password != confirm:
+                messagebox.showwarning("Validation", "Passwords do not match.", parent=self)
+                return
+            if len(password) < 4:
+                messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=self)
+                return
+            vals["password"] = hash_pw(password)
+        
+        # Password validation for edit (admin only)
+        elif self.is_admin and hasattr(self, 'password_entry'):
+            password = self.password_entry.get()
+            confirm = self.confirm_password_entry.get()
+            if password or confirm:
+                if password != confirm:
+                    messagebox.showwarning("Validation", "Passwords do not match.", parent=self)
+                    return
+                if len(password) < 4:
+                    messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=self)
+                    return
+                vals["new_password"] = hash_pw(password)
+        
         vals["gender"] = self.gender_var.get()
         vals["status"] = self.status_var.get()
         vals["class_id"] = self.class_map.get(self.class_var.get())
         vals["dob"] = self.dob_entry.get().strip() or None
+        
         if self.on_save:
             self.on_save(vals)
         self.destroy()
 
-
 class TeacherDialog(ctk.CTkToplevel):
-    def __init__(self, master, title="Teacher", data=None, on_save=None):
+    def __init__(self, master, title="Teacher", data=None, on_save=None, is_admin=False):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x650")
+        self.geometry("500x700")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
+        self.is_admin = is_admin
+        self.is_edit = data is not None
         self.grab_set()
 
         SectionLabel(self, title).pack(pady=(20, 10))
@@ -589,7 +668,7 @@ class TeacherDialog(ctk.CTkToplevel):
                           dropdown_fg_color=CARD).grid(row=row, column=1, padx=16, pady=6, sticky="ew")
         row += 1
 
-        ctk.CTkLabel(form, text="Username (for login)", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Username (required for login)", text_color=SUBTEXT,
                      anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
         self.username_entry = StyledEntry(form, placeholder="username", width=280)
         self.username_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
@@ -597,11 +676,31 @@ class TeacherDialog(ctk.CTkToplevel):
             self.username_entry.insert(0, str(data["username"]))
         row += 1
         
-        ctk.CTkLabel(form, text="Password (for new account)", text_color=SUBTEXT,
-                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
-        self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="*", width=280)
-        self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
-        row += 1
+        # Password field
+        if not self.is_edit:
+            ctk.CTkLabel(form, text="Password (required)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.password_entry = StyledEntry(form, placeholder="Enter password", show="*", width=280)
+            self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+            
+            ctk.CTkLabel(form, text="Confirm Password (required)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.confirm_password_entry = StyledEntry(form, placeholder="Confirm password", show="*", width=280)
+            self.confirm_password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+        elif self.is_admin:
+            ctk.CTkLabel(form, text="New Password (optional)", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="*", width=280)
+            self.password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
+            
+            ctk.CTkLabel(form, text="Confirm Password", text_color=SUBTEXT,
+                         anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+            self.confirm_password_entry = StyledEntry(form, placeholder="Confirm new password", show="*", width=280)
+            self.confirm_password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+            row += 1
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x", padx=20, pady=16)
@@ -612,13 +711,49 @@ class TeacherDialog(ctk.CTkToplevel):
 
     def _save(self):
         vals = {k: e.get().strip() for k, e in self.vars.items()}
+        
+        # Required fields validation
         if not vals["teacher_id"] or not vals["full_name"]:
             messagebox.showwarning("Validation", "Teacher ID and Full Name are required.", parent=self)
             return
         
+        # Username validation
+        username = self.username_entry.get().strip()
+        if not username:
+            messagebox.showwarning("Validation", "Username is required for teacher accounts.", parent=self)
+            return
+        
+        vals["username"] = username
         vals["status"] = self.status_var.get()
-        vals["username"] = self.username_entry.get().strip()
-        vals["password"] = self.password_entry.get()
+        
+        # Password validation for new teacher
+        if not self.is_edit:
+            password = self.password_entry.get() if hasattr(self, 'password_entry') else ""
+            confirm = self.confirm_password_entry.get() if hasattr(self, 'confirm_password_entry') else ""
+            
+            if not password:
+                messagebox.showwarning("Validation", "Password is required for new teacher accounts.", parent=self)
+                return
+            if password != confirm:
+                messagebox.showwarning("Validation", "Passwords do not match.", parent=self)
+                return
+            if len(password) < 4:
+                messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=self)
+                return
+            vals["password"] = hash_pw(password)
+        
+        # Password validation for edit (admin only)
+        elif self.is_admin and hasattr(self, 'password_entry'):
+            password = self.password_entry.get()
+            confirm = self.confirm_password_entry.get()
+            if password or confirm:
+                if password != confirm:
+                    messagebox.showwarning("Validation", "Passwords do not match.", parent=self)
+                    return
+                if len(password) < 4:
+                    messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=self)
+                    return
+                vals["new_password"] = hash_pw(password)
         
         if self.on_save:
             self.on_save(vals)
@@ -629,7 +764,7 @@ class ClassDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Class", data=None, on_save=None):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x600")
+        self.geometry("500x650")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
@@ -642,15 +777,22 @@ class ClassDialog(ctk.CTkToplevel):
         form.pack(fill="both", expand=True, padx=20, pady=10)
         form.columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(form, text="Class Name", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Class Name (required)", text_color=SUBTEXT,
                      anchor="w").grid(row=0, column=0, padx=16, pady=6, sticky="w")
         self.name_entry = StyledEntry(form, placeholder="e.g. Grade 10 - Section A", width=280)
         self.name_entry.grid(row=0, column=1, padx=16, pady=6, sticky="ew")
         if data:
             self.name_entry.insert(0, data.get("class_name", ""))
         
-        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Room (required)", text_color=SUBTEXT,
                      anchor="w").grid(row=1, column=0, padx=16, pady=6, sticky="w")
+        self.room_entry = StyledEntry(form, placeholder="Room number", width=280)
+        self.room_entry.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
+        if data:
+            self.room_entry.insert(0, data.get("room", ""))
+        
+        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
+                     anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
         teachers = self._load_teachers()
         self.teacher_map = {v: k for k, v in teachers}
         teacher_names = [v for _, v in teachers]
@@ -660,31 +802,16 @@ class ClassDialog(ctk.CTkToplevel):
                                               values=teacher_names or ["None"],
                                               fg_color=CARD2, button_color=PRIMARY,
                                               dropdown_fg_color=CARD)
-        self.teacher_menu.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
+        self.teacher_menu.grid(row=2, column=1, padx=16, pady=6, sticky="ew")
         
-        ctk.CTkLabel(form, text="Room", text_color=SUBTEXT,
-                     anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
-        self.room_entry = StyledEntry(form, placeholder="Room number", width=280)
-        self.room_entry.grid(row=2, column=1, padx=16, pady=6, sticky="ew")
-        if data:
-            self.room_entry.insert(0, data.get("room", ""))
-        
-        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
-                     anchor="w").grid(row=3, column=0, padx=16, pady=6, sticky="w")
-        self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
-        ctk.CTkOptionMenu(form, variable=self.status_var,
-                          values=["Active", "Inactive"],
-                          fg_color=CARD2, button_color=PRIMARY,
-                          dropdown_fg_color=CARD).grid(row=3, column=1, padx=16, pady=6, sticky="ew")
-        
-        ctk.CTkLabel(form, text="Subjects in this Class", text_color=SUBTEXT,
-                     font=ctk.CTkFont(weight="bold")).grid(row=4, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
+        ctk.CTkLabel(form, text="Subjects (at least one required)", text_color=SUBTEXT,
+                     font=ctk.CTkFont(weight="bold")).grid(row=3, column=0, columnspan=2, padx=16, pady=(20, 10), sticky="w")
         
         subjects = self._load_subjects()
         self.subject_vars = {}
         
         subject_frame = ctk.CTkFrame(form, fg_color=CARD2, corner_radius=8)
-        subject_frame.grid(row=5, column=0, columnspan=2, padx=16, pady=6, sticky="ew")
+        subject_frame.grid(row=4, column=0, columnspan=2, padx=16, pady=6, sticky="ew")
         
         existing_subjects = self._get_class_subjects() if data else []
         
@@ -695,6 +822,14 @@ class ClassDialog(ctk.CTkToplevel):
                                  text_color=TEXT)
             cb.pack(anchor="w", padx=16, pady=4)
             self.subject_vars[sid] = var
+
+        ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
+                     anchor="w").grid(row=5, column=0, padx=16, pady=6, sticky="w")
+        self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
+        ctk.CTkOptionMenu(form, variable=self.status_var,
+                          values=["Active", "Inactive"],
+                          fg_color=CARD2, button_color=PRIMARY,
+                          dropdown_fg_color=CARD).grid(row=5, column=1, padx=16, pady=6, sticky="ew")
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x", padx=20, pady=16)
@@ -731,21 +866,31 @@ class ClassDialog(ctk.CTkToplevel):
 
     def _save(self):
         name = self.name_entry.get().strip()
+        room = self.room_entry.get().strip()
+        
         if not name:
             messagebox.showwarning("Validation", "Class name is required.", parent=self)
+            return
+        
+        if not room:
+            messagebox.showwarning("Validation", "Room number is required.", parent=self)
+            return
+        
+        selected_subjects = [sid for sid, var in self.subject_vars.items() if var.get()]
+        
+        if not selected_subjects:
+            messagebox.showwarning("Validation", "At least one subject is required for the class.", parent=self)
             return
         
         teacher_id = self.teacher_map.get(self.teacher_var.get())
         if teacher_id == "None":
             teacher_id = None
         
-        selected_subjects = [sid for sid, var in self.subject_vars.items() if var.get()]
-        
         if self.on_save:
             self.on_save({
                 "class_name": name,
                 "teacher_id": teacher_id,
-                "room": self.room_entry.get().strip() or None,
+                "room": room,
                 "status": self.status_var.get(),
                 "subjects": selected_subjects,
                 "class_id": self.data.get("id") if self.data else None
@@ -757,7 +902,7 @@ class SubjectDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Subject", data=None, on_save=None):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x500")
+        self.geometry("500x480")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
@@ -770,48 +915,34 @@ class SubjectDialog(ctk.CTkToplevel):
         form.pack(fill="both", expand=True, padx=20, pady=10)
         form.columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(form, text="Subject Name", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Subject Name (required)", text_color=SUBTEXT,
                      anchor="w").grid(row=0, column=0, padx=16, pady=6, sticky="w")
         self.name_entry = StyledEntry(form, placeholder="e.g. Mathematics", width=280)
         self.name_entry.grid(row=0, column=1, padx=16, pady=6, sticky="ew")
         if data:
             self.name_entry.insert(0, data.get("subject_name", ""))
         
-        ctk.CTkLabel(form, text="Subject Code", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Subject Code (required)", text_color=SUBTEXT,
                      anchor="w").grid(row=1, column=0, padx=16, pady=6, sticky="w")
         self.code_entry = StyledEntry(form, placeholder="e.g. MATH101", width=280)
         self.code_entry.grid(row=1, column=1, padx=16, pady=6, sticky="ew")
         if data:
             self.code_entry.insert(0, data.get("subject_code", ""))
         
-        ctk.CTkLabel(form, text="Credits", text_color=SUBTEXT,
+        ctk.CTkLabel(form, text="Credits (required)", text_color=SUBTEXT,
                      anchor="w").grid(row=2, column=0, padx=16, pady=6, sticky="w")
         self.credits_entry = StyledEntry(form, placeholder="3", width=280)
         self.credits_entry.grid(row=2, column=1, padx=16, pady=6, sticky="ew")
         if data:
             self.credits_entry.insert(0, str(data.get("credits", "3")))
         
-        ctk.CTkLabel(form, text="Teacher", text_color=SUBTEXT,
-                     anchor="w").grid(row=3, column=0, padx=16, pady=6, sticky="w")
-        teachers = self._load_teachers()
-        self.teacher_map = {v: k for k, v in teachers}
-        teacher_names = [v for _, v in teachers]
-        current_teacher = ""
-        if data and data.get("teacher_name"):
-            current_teacher = data.get("teacher_name")
-        self.teacher_var = ctk.StringVar(value=current_teacher if current_teacher in teacher_names else (teacher_names[0] if teacher_names else "None"))
-        ctk.CTkOptionMenu(form, variable=self.teacher_var,
-                         values=teacher_names or ["None"],
-                         fg_color=CARD2, button_color=PRIMARY,
-                         dropdown_fg_color=CARD).grid(row=3, column=1, padx=16, pady=6, sticky="ew")
-        
         ctk.CTkLabel(form, text="Status", text_color=SUBTEXT,
-                     anchor="w").grid(row=4, column=0, padx=16, pady=6, sticky="w")
+                     anchor="w").grid(row=3, column=0, padx=16, pady=6, sticky="w")
         self.status_var = ctk.StringVar(value=data.get("status", "Active") if data else "Active")
         ctk.CTkOptionMenu(form, variable=self.status_var,
                           values=["Active", "Inactive"],
                           fg_color=CARD2, button_color=PRIMARY,
-                          dropdown_fg_color=CARD).grid(row=4, column=1, padx=16, pady=6, sticky="ew")
+                          dropdown_fg_color=CARD).grid(row=3, column=1, padx=16, pady=6, sticky="ew")
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x", padx=20, pady=16)
@@ -820,36 +951,36 @@ class SubjectDialog(ctk.CTkToplevel):
         StyledButton(btn_row, "Save Subject",
                      command=self._save).pack(side="left", expand=True, padx=4)
 
-    def _load_teachers(self):
-        try:
-            cur = db.cursor(dictionary=True)
-            cur.execute("SELECT id, full_name FROM teachers WHERE is_deleted = FALSE AND status = 'Active'")
-            return [("None", "None")] + [(r["id"], r["full_name"]) for r in cur.fetchall()]
-        except Exception:
-            return [("None", "None")]
-
     def _save(self):
         name = self.name_entry.get().strip()
         code = self.code_entry.get().strip()
-        if not name or not code:
-            messagebox.showwarning("Validation", "Subject Name and Code are required.", parent=self)
+        credits_str = self.credits_entry.get().strip()
+        
+        if not name:
+            messagebox.showwarning("Validation", "Subject name is required.", parent=self)
+            return
+        
+        if not code:
+            messagebox.showwarning("Validation", "Subject code is required.", parent=self)
+            return
+        
+        if not credits_str:
+            messagebox.showwarning("Validation", "Credits are required.", parent=self)
             return
         
         try:
-            credits = int(self.credits_entry.get() or 3)
+            credits = int(credits_str)
+            if credits <= 0:
+                raise ValueError
         except ValueError:
-            credits = 3
-        
-        teacher_id = self.teacher_map.get(self.teacher_var.get())
-        if teacher_id == "None":
-            teacher_id = None
+            messagebox.showwarning("Validation", "Credits must be a positive number.", parent=self)
+            return
         
         if self.on_save:
             self.on_save({
                 "subject_name": name,
                 "subject_code": code,
                 "credits": credits,
-                "teacher_id": teacher_id,
                 "status": self.status_var.get(),
                 "subject_id": self.data.get("id") if self.data else None
             })
@@ -1113,6 +1244,23 @@ class DashboardPage(ScrollablePage):
                 self.stat_cards["status"].configure(text=status['status'] if status else "Active")
                 
                 cur.execute("""
+                    SELECT COUNT(*) + 1 as rank FROM (
+                        SELECT s.student_id, AVG(sc.total) as avg_score
+                        FROM students s
+                        JOIN scores sc ON s.id = sc.student_id
+                        WHERE s.class_id = (SELECT class_id FROM students WHERE student_id=%s)
+                        GROUP BY s.id
+                        HAVING avg_score > (
+                            SELECT AVG(sc2.total) 
+                            FROM scores sc2 
+                            WHERE sc2.student_id = (SELECT id FROM students WHERE student_id=%s)
+                        )
+                    ) as higher_scores
+                """, (self.user_data['student_id'], self.user_data['student_id']))
+                rank = cur.fetchone()
+                self.stat_cards["rank"].configure(text=str(rank['rank']) if rank else "1")
+                
+                cur.execute("""
                     SELECT sub.subject_name, sc.midterm, sc.final, sc.total, sc.grade
                     FROM scores sc
                     JOIN subjects sub ON sc.subject_id = sub.id
@@ -1181,7 +1329,7 @@ class StudentsPage(ScrollablePage):
         table_frame = ctk.CTkFrame(self.inner, fg_color=CARD, corner_radius=14)
         table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        cols  = ["ID", "Name", "Gender", "Email", "Phone", "Class", "Status", "Deleted"]
+        cols  = ["Student ID", "Name", "Gender", "Email", "Phone", "Class", "Status", "Deleted"]
         widths = [90, 200, 80, 180, 110, 110, 80, 80]
         self.tree, sb = styled_table(table_frame, cols, widths)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=16)
@@ -1261,8 +1409,10 @@ class StudentsPage(ScrollablePage):
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
-                SELECT s.*, c.class_name FROM students s
+                SELECT s.*, c.class_name, u.username 
+                FROM students s
                 LEFT JOIN classes c ON s.class_id=c.id
+                LEFT JOIN users u ON s.student_id = u.student_id
                 WHERE s.id=%s
             """, (self.selected_db_id,))
             return cur.fetchone()
@@ -1270,7 +1420,7 @@ class StudentsPage(ScrollablePage):
             return None
 
     def _add(self):
-        StudentDialog(self, "Add Student", on_save=self._do_add)
+        StudentDialog(self, "Add Student", on_save=self._do_add, is_admin=(self.user_data['role'] == 'admin'))
 
     def _do_add(self, vals):
         try:
@@ -1279,14 +1429,23 @@ class StudentsPage(ScrollablePage):
                 INSERT INTO students (student_id,full_name,gender,email,phone,address,class_id,status,dob,is_deleted)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
             """, (vals["student_id"], vals["full_name"], vals["gender"],
-                  vals["email"], vals["phone"], vals["address"],
-                  vals["class_id"], vals["status"], vals.get("dob")))
+                vals["email"], vals["phone"], vals["address"],
+                vals["class_id"], vals["status"], vals.get("dob")))
+            
+            # Create user account with username from form
+            if "password" in vals and vals.get("username"):
+                cur.execute("""
+                    INSERT INTO users (username, password, role, full_name, email, student_id, is_deleted)
+                    VALUES (%s, %s, 'student', %s, %s, %s, FALSE)
+                """, (vals["username"], vals["password"], vals["full_name"], 
+                    vals["email"], vals["student_id"]))
+            
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Student added successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
-
+        
     def _edit(self):
         data = self._get_selected_data()
         if not data:
@@ -1296,7 +1455,7 @@ class StudentsPage(ScrollablePage):
             messagebox.showwarning("Cannot Edit", "Deleted students cannot be edited. Restore them first.")
             return
         StudentDialog(self, "Edit Student", data=data,
-                      on_save=lambda v: self._do_edit(v))
+                      on_save=lambda v: self._do_edit(v), is_admin=(self.user_data['role'] == 'admin'))
 
     def _view(self):
         data = self._get_selected_data()
@@ -1348,14 +1507,28 @@ class StudentsPage(ScrollablePage):
                 email=%s,phone=%s,address=%s,class_id=%s,status=%s,dob=%s
                 WHERE id=%s
             """, (vals["student_id"], vals["full_name"], vals["gender"],
-                  vals["email"], vals["phone"], vals["address"],
-                  vals["class_id"], vals["status"], vals.get("dob"), self.selected_db_id))
+                vals["email"], vals["phone"], vals["address"],
+                vals["class_id"], vals["status"], vals.get("dob"), self.selected_db_id))
+            
+            # Update username and password if provided
+            if vals.get("username"):
+                update_sql = "UPDATE users SET username=%s, full_name=%s, email=%s"
+                params = [vals["username"], vals["full_name"], vals["email"]]
+                
+                if "new_password" in vals:
+                    update_sql += ", password=%s"
+                    params.append(vals["new_password"])
+                
+                update_sql += " WHERE student_id=%s"
+                params.append(vals["student_id"])
+                cur.execute(update_sql, tuple(params))
+            
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Student updated successfully!")
         except Error as e:
             messagebox.showerror("Error", str(e))
-
+            
     def _can_delete_student(self):
         """Check if student can be deleted (no scores)"""
         try:
@@ -1568,7 +1741,7 @@ class TeachersPage(ScrollablePage):
             return False
 
     def _add(self):
-        TeacherDialog(self, "Add Teacher", on_save=self._do_add)
+        TeacherDialog(self, "Add Teacher", on_save=self._do_add, is_admin=(self.user_data['role'] == 'admin'))
 
     def _do_add(self, vals):
         if not vals["teacher_id"] or not vals["full_name"]:
@@ -1584,13 +1757,13 @@ class TeachersPage(ScrollablePage):
                   vals["phone"], vals["address"], vals["status"]))
             teacher_db_id = cur.lastrowid
             
+            # Create user account
             if vals.get("username"):
-                password = vals.get("password") or "password123"
-                hashed_pw = hash_pw(password)
+                password = vals.get("password", hash_pw("password123"))
                 cur.execute("""
-                    INSERT INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
-                    VALUES (%s, %s, 'teacher', %s, %s, %s, %s, FALSE)
-                """, (vals["username"], hashed_pw, vals["full_name"], vals["email"], teacher_db_id, vals["status"]))
+                    INSERT INTO users (username, password, role, full_name, email, teacher_id, is_deleted)
+                    VALUES (%s, %s, 'teacher', %s, %s, %s, FALSE)
+                """, (vals["username"], password, vals["full_name"], vals["email"], teacher_db_id))
             
             db.commit()
             self.refresh()
@@ -1609,7 +1782,7 @@ class TeachersPage(ScrollablePage):
         
         dialog = ctk.CTkToplevel(self)
         dialog.title("Edit Teacher")
-        dialog.geometry("500x650")
+        dialog.geometry("500x700")
         dialog.resizable(False, False)
         dialog.configure(fg_color=BG_DARK)
         dialog.grab_set()
@@ -1657,12 +1830,39 @@ class TeachersPage(ScrollablePage):
         if data and data.get("username"):
             username_entry.insert(0, str(data["username"]))
         row += 1
+        
+        # Password field for admin
+        ctk.CTkLabel(form, text="New Password (optional)", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        password_entry = StyledEntry(form, placeholder="Leave blank to keep current", show="*", width=280)
+        password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
+        
+        ctk.CTkLabel(form, text="Confirm Password", text_color=SUBTEXT,
+                     anchor="w").grid(row=row, column=0, padx=16, pady=6, sticky="w")
+        confirm_password_entry = StyledEntry(form, placeholder="Confirm new password", show="*", width=280)
+        confirm_password_entry.grid(row=row, column=1, padx=16, pady=6, sticky="ew")
+        row += 1
 
         def save_edit():
             new_vals = {k: e.get().strip() for k, e in vars_dict.items()}
             if not new_vals["teacher_id"] or not new_vals["full_name"]:
                 messagebox.showwarning("Validation", "Teacher ID and Full Name are required.", parent=dialog)
                 return
+            
+            # Check password
+            password = password_entry.get()
+            confirm = confirm_password_entry.get()
+            if password or confirm:
+                if password != confirm:
+                    messagebox.showwarning("Validation", "Passwords do not match.", parent=dialog)
+                    return
+                if len(password) < 4:
+                    messagebox.showwarning("Validation", "Password must be at least 4 characters.", parent=dialog)
+                    return
+                new_password = hash_pw(password)
+            else:
+                new_password = None
             
             try:
                 cur = db.cursor()
@@ -1675,14 +1875,22 @@ class TeachersPage(ScrollablePage):
                 new_username = username_entry.get().strip()
                 if new_username:
                     if data.get("username"):
-                        cur.execute("UPDATE users SET username=%s, full_name=%s, email=%s, status=%s WHERE teacher_id=%s",
-                                    (new_username, new_vals["full_name"], new_vals["email"], status_var.get(), self.selected_id))
+                        # Update existing user
+                        update_sql = "UPDATE users SET username=%s, full_name=%s, email=%s"
+                        params = [new_username, new_vals["full_name"], new_vals["email"]]
+                        if new_password:
+                            update_sql += ", password=%s"
+                            params.append(new_password)
+                        update_sql += " WHERE teacher_id=%s"
+                        params.append(self.selected_id)
+                        cur.execute(update_sql, tuple(params))
                     else:
-                        hashed_pw = hash_pw("password123")
+                        # Create new user account
+                        default_pw = new_password if new_password else hash_pw("password123")
                         cur.execute("""
-                            INSERT INTO users (username, password, role, full_name, email, teacher_id, status, is_deleted)
-                            VALUES (%s, %s, 'teacher', %s, %s, %s, %s, FALSE)
-                        """, (new_username, hashed_pw, new_vals["full_name"], new_vals["email"], self.selected_id, status_var.get()))
+                            INSERT INTO users (username, password, role, full_name, email, teacher_id, is_deleted)
+                            VALUES (%s, %s, 'teacher', %s, %s, %s, FALSE)
+                        """, (new_username, default_pw, new_vals["full_name"], new_vals["email"], self.selected_id))
                 
                 db.commit()
                 self.refresh()
@@ -2109,10 +2317,9 @@ class SubjectsPage(ScrollablePage):
         try:
             cur = db.cursor()
             cur.execute("""
-                INSERT INTO subjects (subject_name, subject_code, credits, teacher_id, status, is_deleted)
-                VALUES (%s, %s, %s, %s, %s, FALSE)
-            """, (vals["subject_name"], vals["subject_code"], vals["credits"], 
-                  vals["teacher_id"], vals["status"]))
+                INSERT INTO subjects (subject_name, subject_code, credits, status, is_deleted)
+                VALUES (%s, %s, %s, %s, FALSE)
+            """, (vals["subject_name"], vals["subject_code"], vals["credits"], vals["status"]))
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Subject added successfully!")
@@ -2133,11 +2340,10 @@ class SubjectsPage(ScrollablePage):
         try:
             cur = db.cursor()
             cur.execute("""
-                UPDATE subjects SET subject_name=%s, subject_code=%s, credits=%s, 
-                                   teacher_id=%s, status=%s
+                UPDATE subjects SET subject_name=%s, subject_code=%s, credits=%s, status=%s
                 WHERE id=%s
             """, (vals["subject_name"], vals["subject_code"], vals["credits"],
-                  vals["teacher_id"], vals["status"], vals["subject_id"]))
+                  vals["status"], vals["subject_id"]))
             db.commit()
             self.refresh()
             messagebox.showinfo("Success", "Subject updated successfully!")
@@ -2478,7 +2684,7 @@ class MainApp(ctk.CTk):
         try:
             cur = db.cursor(dictionary=True)
             cur.execute("""
-                SELECT id, username, role, full_name, student_id, teacher_id, email, status, is_deleted
+                SELECT id, username, role, full_name, student_id, teacher_id, email, is_deleted
                 FROM users WHERE username=%s AND password=%s
             """, (username, hash_pw(password)))
             user = cur.fetchone()
@@ -2486,9 +2692,6 @@ class MainApp(ctk.CTk):
             if user:
                 if user.get("is_deleted"):
                     messagebox.showerror("Login Failed", "Your account has been deactivated. Please contact an administrator.")
-                    return
-                if user.get("status") == "Inactive":
-                    messagebox.showerror("Login Failed", "Your account is inactive. Please contact an administrator.")
                     return
                 self.user_data = user
                 self._build_main_app()
@@ -2664,10 +2867,9 @@ class MainApp(ctk.CTk):
 
 
 if __name__ == "__main__":
-    # Change these to match your MySQL configuration
     DB_HOST = "localhost"
     DB_USER = "root"
-    DB_PASSWORD = "root"  # Change this to your MySQL password
+    DB_PASSWORD = "root"
     
     ok, msg = db.connect(DB_HOST, DB_USER, DB_PASSWORD)
     if not ok:
