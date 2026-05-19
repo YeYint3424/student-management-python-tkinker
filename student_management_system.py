@@ -201,10 +201,16 @@ class Database:
             VALUES ('teacher', %s, 'teacher', 'John Smith', 'john.smith@school.edu', 1, FALSE)
         """, (teacher_pw,))
 
-        # Seed class
+        # Seed class 1
         cur.execute("""
             INSERT IGNORE INTO classes (class_name, teacher_id, room, status, is_deleted)
             VALUES ('Grade 10 - Section A', 1, 'Room 101', 'Active', FALSE)
+        """)
+        
+        # Seed class 2 for teacher
+        cur.execute("""
+            INSERT IGNORE INTO classes (class_name, teacher_id, room, status, is_deleted)
+            VALUES ('Grade 11 - Section B', 1, 'Room 102', 'Active', FALSE)
         """)
 
         # Seed subjects
@@ -217,8 +223,9 @@ class Database:
         """)
         
         cur.execute("INSERT IGNORE INTO class_subjects (class_id, subject_id) VALUES (1,1), (1,2), (1,3)")
+        cur.execute("INSERT IGNORE INTO class_subjects (class_id, subject_id) VALUES (2,1), (2,2)")
 
-        # Seed student 1
+        # Seed student 1 (class 1)
         student_pw = hashlib.sha256("student123".encode()).hexdigest()
         cur.execute("""
             INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
@@ -229,7 +236,7 @@ class Database:
             VALUES ('student', %s, 'student', 'Alice Johnson', 'alice@student.edu', 'STU001', FALSE)
         """, (student_pw,))
 
-        # Seed student 2
+        # Seed student 2 (class 1)
         cur.execute("""
             INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
             VALUES ('STU002', 'Bob Williams', 'Male', 'bob@student.edu', '555-0202', 1, 'Active', FALSE)
@@ -237,6 +244,16 @@ class Database:
         cur.execute("""
             INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, is_deleted)
             VALUES ('student2', %s, 'student', 'Bob Williams', 'bob@student.edu', 'STU002', FALSE)
+        """, (student_pw,))
+        
+        # Seed student 3 (class 2)
+        cur.execute("""
+            INSERT IGNORE INTO students (student_id, full_name, gender, email, phone, class_id, status, is_deleted)
+            VALUES ('STU003', 'Charlie Brown', 'Male', 'charlie@student.edu', '555-0203', 2, 'Active', FALSE)
+        """)
+        cur.execute("""
+            INSERT IGNORE INTO users (username, password, role, full_name, email, student_id, is_deleted)
+            VALUES ('student3', %s, 'student', 'Charlie Brown', 'charlie@student.edu', 'STU003', FALSE)
         """, (student_pw,))
 
 
@@ -440,7 +457,7 @@ class StudentDialog(ctk.CTkToplevel):
     def __init__(self, master, title="Student", data=None, on_save=None, teacher_mode=False, is_admin=False):
         super().__init__(master)
         self.title(title)
-        self.geometry("500x800")  # Increased height for username field
+        self.geometry("500x800")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         self.on_save = on_save
@@ -1106,7 +1123,7 @@ class DashboardPage(ScrollablePage):
             specs = [
                 ("My Students", PRIMARY, "students"),
                 ("Active Students", SUCCESS, "active"),
-                ("My Class", WARNING, "class"),
+                ("My Classes", WARNING, "class"),
                 ("My Subjects", "#A855F7", "subjects"),
             ]
         else:
@@ -1189,40 +1206,61 @@ class DashboardPage(ScrollablePage):
                                              r["class_name"] or "-", r["status"], created_date))
                     
             elif self.user_data['role'] == 'teacher':
+                # Get ALL classes for this teacher
                 cur.execute("""
-                    SELECT c.id, c.class_name FROM classes c
+                    SELECT c.id, c.class_name, COUNT(s.id) as student_count,
+                        SUM(CASE WHEN s.status = 'Active' THEN 1 ELSE 0 END) as active_count
+                    FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
-                    WHERE t.id = %s AND c.is_deleted = FALSE
+                    LEFT JOIN students s ON s.class_id = c.id AND s.is_deleted = FALSE
+                    WHERE t.id = %s AND c.is_deleted = FALSE AND c.status = 'Active'
+                    GROUP BY c.id
                 """, (self.user_data['teacher_id'],))
-                class_info = cur.fetchone()
                 
-                if class_info:
-                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s AND is_deleted = FALSE", (class_info['id'],))
-                    self.stat_cards["students"].configure(text=cur.fetchone()["n"])
-                    cur.execute("SELECT COUNT(*) AS n FROM students WHERE class_id=%s AND status='Active' AND is_deleted = FALSE", (class_info['id'],))
-                    self.stat_cards["active"].configure(text=cur.fetchone()["n"])
-                    self.stat_cards["class"].configure(text=class_info['class_name'][:15])
-                    cur.execute("SELECT COUNT(*) AS n FROM subjects WHERE is_deleted = FALSE AND status='Active'")
-                    self.stat_cards["subjects"].configure(text=cur.fetchone()["n"])
+                teacher_classes = cur.fetchall()
+                
+                if teacher_classes:
+                    # Calculate totals across all classes
+                    total_students = sum(c['student_count'] or 0 for c in teacher_classes)
+                    total_active = sum(c['active_count'] or 0 for c in teacher_classes)
+                    # Show count of classes instead of class names
+                    class_count = len(teacher_classes)
                     
+                    self.stat_cards["students"].configure(text=str(total_students))
+                    self.stat_cards["active"].configure(text=str(total_active))
+                    self.stat_cards["class"].configure(text=str(class_count))  # Changed to show number only
+                    
+                    # Get subject count (distinct subjects across all teacher's classes)
+                    cur.execute("""
+                        SELECT COUNT(DISTINCT s.id) as n
+                        FROM subjects s
+                        JOIN class_subjects cs ON s.id = cs.subject_id
+                        JOIN classes c ON cs.class_id = c.id
+                        WHERE c.teacher_id = %s AND c.is_deleted = FALSE 
+                        AND s.is_deleted = FALSE AND s.status = 'Active'
+                    """, (self.user_data['teacher_id'],))
+                    self.stat_cards["subjects"].configure(text=cur.fetchone()["n"] or "0")
+                    
+                    # Get recent students from ALL teacher's classes
                     cur.execute("""
                         SELECT s.student_id, s.full_name, c.class_name, s.status,
-                               DATE(s.created) AS created
+                            DATE(s.created) AS created
                         FROM students s
-                        LEFT JOIN classes c ON s.class_id=c.id
-                        WHERE s.class_id = %s AND s.is_deleted = FALSE
+                        LEFT JOIN classes c ON s.class_id = c.id
+                        WHERE c.teacher_id = %s AND s.is_deleted = FALSE
                         ORDER BY s.created DESC LIMIT 10
-                    """, (class_info['id'],))
+                    """, (self.user_data['teacher_id'],))
+                    
                     self.tree.delete(*self.tree.get_children())
                     for r in cur.fetchall():
                         created_date = str(r["created"]) if r["created"] else "-"
                         self.tree.insert("", "end",
-                                         values=(r["student_id"], r["full_name"],
-                                                 r["class_name"] or "-", r["status"], created_date))
+                                    values=(r["student_id"], r["full_name"],
+                                            r["class_name"] or "-", r["status"], created_date))
                 else:
                     self.stat_cards["students"].configure(text="0")
                     self.stat_cards["active"].configure(text="0")
-                    self.stat_cards["class"].configure(text="No Class")
+                    self.stat_cards["class"].configure(text="0") 
                     self.stat_cards["subjects"].configure(text="0")
                     
             else:
@@ -1343,12 +1381,13 @@ class StudentsPage(ScrollablePage):
             try:
                 cur = db.cursor(dictionary=True)
                 cur.execute("""
-                    SELECT c.id FROM classes c
+                    SELECT GROUP_CONCAT(c.id) as class_ids
+                    FROM classes c
                     JOIN teachers t ON c.teacher_id = t.id
-                    WHERE t.id = %s AND c.is_deleted = FALSE
+                    WHERE t.id = %s AND c.is_deleted = FALSE AND c.status = 'Active'
                 """, (self.user_data['teacher_id'],))
                 result = cur.fetchone()
-                return result['id'] if result else None
+                return result['class_ids'] if result and result['class_ids'] else None
             except:
                 return None
         return None
@@ -1372,8 +1411,8 @@ class StudentsPage(ScrollablePage):
             conditions = []
             
             if class_filter:
-                conditions.append("s.class_id = %s")
-                params.append(class_filter)
+                # Handle multiple class IDs with IN clause
+                conditions.append(f"s.class_id IN ({class_filter})")
             
             if not show_deleted:
                 conditions.append("s.is_deleted = FALSE")
@@ -1417,8 +1456,8 @@ class StudentsPage(ScrollablePage):
             """, (self.selected_db_id,))
             return cur.fetchone()
         except Exception:
-            return None
-
+            return None   
+        
     def _add(self):
         StudentDialog(self, "Add Student", on_save=self._do_add, is_admin=(self.user_data['role'] == 'admin'))
 
@@ -2463,8 +2502,8 @@ class ReportsPage(ScrollablePage):
                     WHERE t.id = %s AND c.is_deleted = FALSE AND c.status = 'Active'
                 """, (self.user_data['teacher_id'],))
                 names = [r["class_name"] for r in cur.fetchall()]
-                self.class_menu.configure(values=names if names else ["No Class"])
-                self.class_var.set(names[0] if names else "No Class")
+                self.class_menu.configure(values=["All Classes"] + names if names else ["No Class"])
+                self.class_var.set("All Classes" if names else "No Class")
             else:
                 cur.execute("SELECT class_name FROM classes WHERE is_deleted = FALSE AND status = 'Active' ORDER BY class_name")
                 names = ["All Classes"] + [r["class_name"] for r in cur.fetchall()]
@@ -2664,6 +2703,7 @@ class MainApp(ctk.CTk):
             ("Teacher", "teacher / teacher123"),
             ("Student 1", "student / student123"),
             ("Student 2", "student2 / student123"),
+            ("Student 3", "student3 / student123"),
         ]
         
         for role, cred in creds:
